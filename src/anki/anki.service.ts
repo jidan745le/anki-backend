@@ -14,7 +14,8 @@ import { isUUID } from 'class-validator';
 import { v4 as uuidv4 } from 'uuid';
 import { SplitAudioDto } from './dto/split-audio.dto';
 import * as ffmpeg from 'fluent-ffmpeg';
-import { execSync } from 'child_process';
+import ffmpegPath from 'ffmpeg-static';
+
 
 
 @Injectable()
@@ -23,8 +24,8 @@ export class AnkiService {
   constructor() {
     // 获取 ffmpeg 路径
     try {
-      console.log(execSync(process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg').toString(),"dddd")
-      const ffmpegPath = execSync(process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg').toString().trim().split('\n')[0];
+      // console.log(execSync(process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg').toString(),"dddd")
+      // const ffmpegPath = execSync(process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg').toString().trim().split('\n')[0];
       // const ffmpegPath = 'C:\\ffmpeg\\bin\\ffmpeg.exe'; // 根据实际安装路径修改
 
       console.log('FFmpeg path:', ffmpegPath);
