@@ -23,7 +23,7 @@ import { FileModule } from './file/file.module';
       port: 3306,
       username: "root",
       password: "123456",
-      database: "anki1",
+      database: "anki",
       synchronize: true,
       // logging: true,
       entities: [User, Card, Deck],
