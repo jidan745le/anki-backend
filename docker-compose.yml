@@ -8,7 +8,7 @@ services:
       - mysql-container
       - redis-container
     ports:
-      - 3000:3005
+      - 3005:3000
     networks:
       - common-network
   mysql-container:
