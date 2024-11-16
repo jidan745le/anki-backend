@@ -198,41 +198,44 @@ export class AnkiService {
     }
 
     const now = new Date();
-
     this.updateStatsCache(deckId, card.card_type);
 
     // 更新复习次数
     card.repetitions = (card.repetitions || 0) + 1;
     card.lastReviewTime = now;
 
-    // 根据 SM-2 算法计算新的间隔和难度因子
-    if (quality < ReviewQuality.HARD) {  // 如果回答错误
-      card.interval = 1;  // 重置间隔
-      card.easeFactor = Math.max(1.3, card.easeFactor - 0.2);  // 降低难度因子，最低为1.3
+    // 计算下次复习时间
+    const nextReview = new Date(now);
+    
+    if (quality < ReviewQuality.HARD) {  // 如果回答困难
+      // 5分钟后复习
+      nextReview.setMinutes(nextReview.getMinutes() + 5);
       card.card_type = CardType.REVIEW;
+      // 降低难度因子，最低为1.3
+      card.easeFactor = Math.max(1.3, card.easeFactor - 0.2);
     } else {
       if (card.card_type === CardType.NEW) {
-        // 新卡片的第一次复习
-        card.interval = 1;
+        // 新卡片第一次复习，30分钟后
+        nextReview.setMinutes(nextReview.getMinutes() + 30);
         card.card_type = CardType.REVIEW;
       } else {
-        // 根据当前间隔和难度因子计算新间隔
-        if (card.interval === 1) {
-          card.interval = 6;  // 第二次复习后间隔6天
-        } else {
-          card.interval = Math.round(card.interval * card.easeFactor);
-        }
+        // 已经复习过的卡片，30分钟后
+        nextReview.setMinutes(nextReview.getMinutes() + 30);
       }
-
-      // 根据答题质量调整难度因子
+      
+      // 保留SM-2算法的难度因子调整逻辑
       card.easeFactor = card.easeFactor + (0.1 - (3 - quality) * (0.08 + (3 - quality) * 0.02));
       card.easeFactor = Math.max(1.3, Math.min(2.5, card.easeFactor));  // 保持在1.3-2.5之间
     }
 
-    // 计算下次复习时间
-    const nextReview = new Date(now);
-    nextReview.setDate(nextReview.getDate() + card.interval);
     card.nextReviewTime = nextReview;
+    card.interval = Math.round((nextReview.getTime() - now.getTime()) / (1000 * 60)); // 保存间隔分钟数
+
+    // 可以根据easeFactor稍微调整间隔时间
+    if (card.easeFactor > 2.0 && quality >= ReviewQuality.HARD) {
+      // 如果难度因子高且回答正确，可以稍微增加间隔
+      nextReview.setMinutes(nextReview.getMinutes() + 5);
+    }
 
     // 保存更新后的卡片
     return await this.cardRepository.save(card);
