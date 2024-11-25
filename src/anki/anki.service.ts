@@ -632,6 +632,8 @@ export class AnkiService {
 
     const browser = await puppeteer.launch({
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      timeout: 60000, // Increase the timeout to 60 seconds (adjust as needed)
+      dumpio: true, // Enable logging
     });
 
     try {
