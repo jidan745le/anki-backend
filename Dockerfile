@@ -36,10 +36,11 @@ COPY --from=build-stage --chown=appuser:appgroup /app/package.json /app/package.
 
 WORKDIR /app
 
+USER appuser
+
 RUN npm install --production
 
 # 切换到非 root 用户
-USER appuser
 
 EXPOSE 3000
 
