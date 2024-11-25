@@ -188,29 +188,29 @@ export class AnkiService {
 
   private async getDeck(deckId: number): Promise<Deck> {
     const cacheKey = `deck:${deckId}`;
-  
+
     // 尝试从Redis获取缓存
     const cachedDeck = await this.redisClient.get(cacheKey);
     if (cachedDeck) {
       return JSON.parse(cachedDeck);
     }
-  
+
     // 如果缓存中没有,从数据库获取
     const deck = await this.deckRepository.findOne({ where: { id: deckId } });
     if (!deck) {
       throw new NotFoundException(`Deck with ID ${deckId} not found`);
     }
-  
+
     // 将deck存入缓存,设置过期时间为1小时
-    await this.redisClient.set(cacheKey, JSON.stringify(deck),  { 'EX': 3600 });
-  
+    await this.redisClient.set(cacheKey, JSON.stringify(deck), { 'EX': 3600 });
+
     return deck;
   }
 
 
   async getNextCard(deckId: number) {
     const deck = await this.getDeck(deckId);
-  
+
     if (deck.deckType === DeckType.AUDIO) {
       return await this.getSequentialCard(deckId);
     } else {
@@ -220,7 +220,7 @@ export class AnkiService {
 
   private async getSequentialCard(deckId: number) {
     const now = new Date();
-  
+
     const card = await this.cardRepository
       .createQueryBuilder('card')
       .where('card.deck_id = :deckId', { deckId })
@@ -228,7 +228,7 @@ export class AnkiService {
       .orderBy('card.id', 'ASC')
       .take(1)
       .getOne();
-  
+
     if (card) {
       return card;
     } else {
@@ -236,7 +236,7 @@ export class AnkiService {
         .createQueryBuilder('card')
         .where('card.deck_id = :deckId', { deckId })
         .getCount();
-  
+
       if (hasCards === 0) {
         return null;  // deck中没有卡片
       } else {
@@ -447,7 +447,7 @@ export class AnkiService {
       const newDeck = await this.addDeck({
         name: dto.name,
         description: dto.description,
-        deckType:DeckType.AUDIO
+        deckType: DeckType.AUDIO
       }, userId);
 
       const ossPrefix = `decks/${newDeck.id}/audio`;
@@ -616,21 +616,23 @@ export class AnkiService {
       return;
     }
 
-    if(dto.podcastType === PodcastType.AmericanLife){
+    if (dto.podcastType === PodcastType.AmericanLife) {
       return await this.processThisAmericanLife(dto, userId);
     }
 
-    if(dto.podcastType === PodcastType.Overthink){
-      return 
+    if (dto.podcastType === PodcastType.Overthink) {
+      return
       // await this.processOverthink(dto, userId);
     }
-    
+
   }
 
   private async processThisAmericanLife(dto: CreatePodcastDeckDto, userId: number): Promise<{ deck: Deck & { stats: any }; cards: Card[] }> {
     const cards: Card[] = [];
 
-    const browser = await puppeteer.launch();
+    const browser = await puppeteer.launch({
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
 
     try {
       const newDeck = await this.addDeck(
