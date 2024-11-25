@@ -13,20 +13,21 @@ import { ResponseInterceptor } from './response.interceptor';
 import { RedisModule } from './redis/redis.module';
 import { FileModule } from './file/file.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import * as path from 'path';
 
 @Module({
   imports: [
     UserModule,
     AnkiModule,
     ConfigModule.forRoot({
-      envFilePath: '.env',
+      envFilePath: path.join(__dirname, '.env'),
       isGlobal: true,
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
         type: 'mysql',
-        host: configService.get('NODE_ENV') === 'development' 
+        host: configService.get('NODE_ENV') === 'development'
           ? 'localhost'
           : configService.getOrThrow('DB_HOST'),
         port: configService.getOrThrow('DB_PORT'),
