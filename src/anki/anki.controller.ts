@@ -11,6 +11,7 @@ import { SplitAudioDto } from './dto/split-audio.dto';
 
 
 import { AnyFilesInterceptor, FileFieldsInterceptor, FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { CreatePodcastDeckDto } from './dto/create-podcast-deck.dto';
 
 
 @UseGuards(LoginGuard)
@@ -74,10 +75,7 @@ export class AnkiController {
       const newDeck = await this.ankiService.addDeck(deck, userId);
       if (file) {
         const cards = await this.ankiService.parseCardsFile(file);
-        console.log('cards', cards)
-
         const insertedCards = await this.ankiService.addCards(cards, newDeck.id);
-        console.log('insertedCards', insertedCards)
       }
       return newDeck
       // return this.ankiService.addDeck(deck);
@@ -182,7 +180,22 @@ export class AnkiController {
     @Req() req
   ) {
     const userId: number = req?.user?.id;
-    return await this.ankiService.createDeckWithAudio(file, splitAudioDto, userId);
+    return await this.ankiService.createDeckWithAudioForOss(file, splitAudioDto, userId);
   }
+
+  @Post('createDeckWithPodcast')
+  @UseInterceptors(FileInterceptor('file', {
+    dest: 'uploads/temp'
+  }))
+  async createDeckWithPodcast(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() deck: CreatePodcastDeckDto,
+    @Req() req
+  ) {
+    const userId: number = req?.user?.id;
+    return await this.ankiService.createDeckWithPodcast(file, deck, userId);
+  }
+
 }
+
 

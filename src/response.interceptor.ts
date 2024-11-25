@@ -17,7 +17,7 @@ import {
         catchError(err => {
              console.log('err212312312', err)
 
-            if(err.getStatus() === 200){
+            if(err.getStatus && err.getStatus() === 200){
                 return of({message:err.getResponse(),error:true})
             }
             return throwError(() => err)

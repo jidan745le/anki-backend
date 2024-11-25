@@ -12,29 +12,38 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ResponseInterceptor } from './response.interceptor';
 import { RedisModule } from './redis/redis.module';
 import { FileModule } from './file/file.module';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 
 @Module({
   imports: [
     UserModule,
     AnkiModule,
-    TypeOrmModule.forRoot({
-      type: "mysql",
-      host: process.env.NODE_ENV == "development" ? "localhost" : "mysql-container",
-      port: 3306,
-      username: "root",
-      password: "123456",
-      database: "anki",
-      synchronize: true,
-      // logging: true,
-      entities: [User, Card, Deck],
-      poolSize: 10,
-      connectorPackage: 'mysql2',
-      extra: {
-        authPlugin: 'sha256_password',
-      },
-
+    ConfigModule.forRoot({
+      envFilePath: '.env',
+      isGlobal: true,
     }),
-    RedisModule.forRoot({ host: process.env.NODE_ENV == "development" ? "localhost" : "redis-container", port: 6379 }),
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => ({
+        type: 'mysql',
+        host: configService.get('NODE_ENV') === 'development' 
+          ? 'localhost'
+          : configService.getOrThrow('DB_HOST'),
+        port: configService.getOrThrow('DB_PORT'),
+        username: configService.getOrThrow('DB_USERNAME'),
+        password: configService.getOrThrow('DB_PASSWORD'),
+        database: configService.getOrThrow('DB_DATABASE'),
+        synchronize: true,
+        entities: [User, Card, Deck],
+        poolSize: configService.getOrThrow('DB_POOL_SIZE'),
+        connectorPackage: 'mysql2',
+        extra: {
+          authPlugin: 'sha256_password',
+        },
+      }),
+      inject: [ConfigService],
+    }),
+    RedisModule.forRootAsync(),
     JwtModule.register({ global: true, secret: "secret", signOptions: { expiresIn: "1d" } }),
     RedisModule,
     FileModule,
@@ -52,4 +61,4 @@ import { FileModule } from './file/file.module';
       useValue: "bbb"
     }],
 })
-export class AppModule { } 
+export class AppModule { }

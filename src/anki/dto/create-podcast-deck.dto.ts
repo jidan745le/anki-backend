@@ -1,18 +1,24 @@
 import { IsEnum, IsNotEmpty, IsOptional, IsString, IsInt, IsBoolean, IsDecimal, MaxLength } from 'class-validator';
-import { DeckType } from '../entities/deck.entity';
 
-export class CreateDeckDto {
+export enum PodcastType {
+    AmericanLife = 'this american life',
+    Overthink = 'overthink',
+}
+export class CreatePodcastDeckDto {
   @IsNotEmpty()
   @IsString()
   name: string; // 名字
 
-  @IsNotEmpty()
   @IsString()
   @MaxLength(500, { message: 'Description is too long' })
   description: string; // 描述
 
   @IsOptional()
-  deckType?:DeckType
+  podcastType?:PodcastType
+  
+  @IsOptional()
+  @IsString()
+  podcastUrl?:string
   
 //   user: number; // 用户 ID
 

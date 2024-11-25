@@ -3,6 +3,11 @@ import { Entity, PrimaryGeneratedColumn, Column, OneToMany, CreateDateColumn, Up
 import { Card } from './card.entity';
 import {User} from "../../user/entities/user.entity"
 
+export enum DeckType {
+  NORMAL = 'normal',
+  AUDIO = 'audio',
+}
+
 @Entity('decks') 
 export class Deck {
   @PrimaryGeneratedColumn()
@@ -13,6 +18,13 @@ export class Deck {
 
   @Column({ length: 500, nullable: true })
   description: string;
+
+  @Column({
+    type: 'enum',
+    enum: DeckType,
+    default: DeckType.NORMAL,
+  })
+   deckType: DeckType;
 
   @CreateDateColumn()
   createdAt: Date;
