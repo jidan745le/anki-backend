@@ -1,5 +1,14 @@
-import { IsEnum, IsNotEmpty, IsOptional, IsString, IsInt, IsBoolean, IsDecimal, MaxLength } from 'class-validator';
-import { DeckType } from '../entities/deck.entity';
+import {
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsInt,
+  IsBoolean,
+  IsDecimal,
+  MaxLength,
+} from 'class-validator';
+import { DeckStatus, DeckType } from '../entities/deck.entity';
 
 export class CreateDeckDto {
   @IsNotEmpty()
@@ -12,9 +21,13 @@ export class CreateDeckDto {
   description: string; // 描述
 
   @IsOptional()
-  deckType?:DeckType
-  
-//   user: number; // 用户 ID
+  deckType?: DeckType;
 
- 
+  @IsOptional()
+  status?: DeckStatus;
+
+  @IsOptional()
+  taskId?: string;
+
+  //   user: number; // 用户 ID
 }

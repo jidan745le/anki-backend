@@ -1,5 +1,11 @@
 import { JwtService } from '@nestjs/jwt';
-import { CanActivate, ExecutionContext, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Inject,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Request } from 'express';
 import { Observable } from 'rxjs';
 
@@ -28,7 +34,7 @@ export class LoginGuard implements CanActivate {
 
     try {
       const info = this.jwtService.verify(token);
-      console.log("info", info);
+      console.log('info', info);
       (request as any).user = info.user;
       return true;
     } catch (e) {

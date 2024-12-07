@@ -1,8 +1,13 @@
 import { Injectable, NotFoundException, Inject, Logger } from '@nestjs/common';
 import { InjectEntityManager, InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository, LessThan } from 'typeorm';
-import { Card, CardType, ContentType, ReviewQuality } from './entities/card.entity';
-import { Deck } from './entities/deck.entity';
+import {
+  Card,
+  CardType,
+  ContentType,
+  ReviewQuality,
+} from './entities/card.entity';
+import { Deck, DeckStatus } from './entities/deck.entity';
 import { UpdateAnkiDto } from './dto/update-anki.dto';
 import { CreateAnkiDto } from './dto/create-anki.dto';
 import { CreateDeckDto } from './dto/create-deck.dto';
@@ -21,25 +26,27 @@ import puppeteer from 'puppeteer';
 import axios from 'axios';
 import { PodcastType } from './dto/create-podcast-deck.dto';
 import { DeckType } from './entities/deck.entity';
-
-
-
-
+import { WebsocketGateway } from 'src/websocket/websocket.gateway';
 
 @Injectable()
 export class AnkiService {
-
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private readonly websocketGateway: WebsocketGateway,
+  ) {
     // 获取 ffmpeg 路径
     try {
       // console.log(execSync(process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg').toString(),"dddd")
-      const ffmpegPath = execSync(process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg').toString().trim().split('\n')[0];
+      const ffmpegPath = execSync(
+        process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg',
+      )
+        .toString()
+        .trim()
+        .split('\n')[0];
       // const ffmpegPath = 'C:\\ffmpeg\\bin\\ffmpeg.exe'; // 根据实际安装路径修改
       ffmpeg.setFfmpegPath(ffmpegPath);
 
       // Verify ffmpeg is working
-
-
     } catch (error) {
       console.error('Error setting ffmpeg path:', error);
       throw new Error('Failed to set ffmpeg path');
@@ -50,19 +57,17 @@ export class AnkiService {
   private manager: EntityManager;
 
   @InjectRepository(Card)
-  private readonly cardRepository: Repository<Card>
+  private readonly cardRepository: Repository<Card>;
 
   @InjectRepository(Deck)
-  private readonly deckRepository: Repository<Deck>
+  private readonly deckRepository: Repository<Deck>;
 
-  @Inject("REDIS_CLIENT")
-  private readonly redisClient: RedisClientType
+  @Inject('REDIS_CLIENT')
+  private readonly redisClient: RedisClientType;
 
   private static ossClient: any;
 
   private readonly logger = new Logger(AnkiService.name);
-
-
 
   async getHello() {
     const value = await this.redisClient.keys('*');
@@ -80,7 +85,7 @@ export class AnkiService {
 
     // 尝试从Redis获取缓存
     const cached = await this.redisClient.get(cacheKey);
-    console.log(cacheKey, cached, "stats")
+    console.log(cacheKey, cached, 'stats');
 
     if (cached) {
       return JSON.parse(cached);
@@ -89,9 +94,8 @@ export class AnkiService {
     // 计算新的统计数据
     const stats = await this.calculateStats(deckId);
 
-
     // 缓存到Redis，设置5分钟过期
-    await this.redisClient.set(cacheKey, JSON.stringify(stats), { 'EX': 300 });
+    await this.redisClient.set(cacheKey, JSON.stringify(stats), { EX: 300 });
 
     return stats;
   }
@@ -99,33 +103,34 @@ export class AnkiService {
   private async calculateStats(deckId: number) {
     const now = new Date();
 
-    const [newCardsCount, dueCardsCount, totalReviewCardsCount] = await Promise.all([
-      this.cardRepository.count({
-        where: {
-          deck: { id: deckId },
-          card_type: CardType.NEW
-        }
-      }),
-      this.cardRepository.count({
-        where: {
-          deck: { id: deckId },
-          card_type: CardType.REVIEW,
-          nextReviewTime: LessThan(now)
-        }
-      }),
-      this.cardRepository.count({
-        where: {
-          deck: { id: deckId },
-          card_type: CardType.REVIEW
-        }
-      })
-    ]);
+    const [newCardsCount, dueCardsCount, totalReviewCardsCount] =
+      await Promise.all([
+        this.cardRepository.count({
+          where: {
+            deck: { id: deckId },
+            card_type: CardType.NEW,
+          },
+        }),
+        this.cardRepository.count({
+          where: {
+            deck: { id: deckId },
+            card_type: CardType.REVIEW,
+            nextReviewTime: LessThan(now),
+          },
+        }),
+        this.cardRepository.count({
+          where: {
+            deck: { id: deckId },
+            card_type: CardType.REVIEW,
+          },
+        }),
+      ]);
 
     return {
       newCards: newCardsCount,
       dueCards: dueCardsCount,
       totalReviewCards: totalReviewCardsCount,
-      totalCards: newCardsCount + totalReviewCardsCount
+      totalCards: newCardsCount + totalReviewCardsCount,
     };
   }
 
@@ -179,9 +184,9 @@ export class AnkiService {
         .getCount();
 
       if (hasCards === 0) {
-        return null;  // deck中没有卡片
+        return null; // deck中没有卡片
       } else {
-        return {};//目前已学完
+        return {}; //目前已学完
       }
     }
   }
@@ -202,11 +207,10 @@ export class AnkiService {
     }
 
     // 将deck存入缓存,设置过期时间为1小时
-    await this.redisClient.set(cacheKey, JSON.stringify(deck), { 'EX': 3600 });
+    await this.redisClient.set(cacheKey, JSON.stringify(deck), { EX: 3600 });
 
     return deck;
   }
-
 
   async getNextCard(deckId: number) {
     const deck = await this.getDeck(deckId);
@@ -238,7 +242,7 @@ export class AnkiService {
         .getCount();
 
       if (hasCards === 0) {
-        return null;  // deck中没有卡片
+        return null; // deck中没有卡片
       } else {
         return {}; // 目前已学完
       }
@@ -247,26 +251,29 @@ export class AnkiService {
 
   async updateStatsCache(deckId: number, cardType: CardType) {
     const cacheKey = this.getStatsCacheKey(deckId);
-    const cacheValue = await this.redisClient.get(cacheKey)
+    const cacheValue = await this.redisClient.get(cacheKey);
     if (!cacheValue) {
       return;
     }
     const deckStats = JSON.parse(cacheValue);
 
     if (cardType === CardType.NEW) {
-      deckStats.newCards = deckStats.newCards - 1,
-        deckStats.totalReviewCards = deckStats.totalReviewCards + 1
+      (deckStats.newCards = deckStats.newCards - 1),
+        (deckStats.totalReviewCards = deckStats.totalReviewCards + 1);
     } else {
-      deckStats.dueCards = deckStats.dueCards - 1
+      deckStats.dueCards = deckStats.dueCards - 1;
     }
 
     this.redisClient.set(cacheKey, JSON.stringify(deckStats), {
-      KEEPTTL: true
+      KEEPTTL: true,
     });
-
   }
 
-  async updateCardWithSM2(deckId: number, cardId: number, quality: ReviewQuality): Promise<Card> {
+  async updateCardWithSM2(
+    deckId: number,
+    cardId: number,
+    quality: ReviewQuality,
+  ): Promise<Card> {
     const card = await this.cardRepository.findOne({ where: { id: cardId } });
     if (!card) {
       throw new NotFoundException(`Card with ID ${cardId} not found`);
@@ -282,7 +289,8 @@ export class AnkiService {
     // 计算下次复习时间
     const nextReview = new Date(now);
 
-    if (quality < ReviewQuality.HARD) {  // 如果回答困难
+    if (quality < ReviewQuality.HARD) {
+      // 如果回答困难
       // 5分钟后复习
       nextReview.setMinutes(nextReview.getMinutes() + 5);
       card.card_type = CardType.REVIEW;
@@ -299,12 +307,15 @@ export class AnkiService {
       }
 
       // 保留SM-2算法的难度因子调整逻辑
-      card.easeFactor = card.easeFactor + (0.1 - (3 - quality) * (0.08 + (3 - quality) * 0.02));
-      card.easeFactor = Math.max(1.3, Math.min(2.5, card.easeFactor));  // 保持在1.3-2.5之间
+      card.easeFactor =
+        card.easeFactor + (0.1 - (3 - quality) * (0.08 + (3 - quality) * 0.02));
+      card.easeFactor = Math.max(1.3, Math.min(2.5, card.easeFactor)); // 保持在1.3-2.5之间
     }
 
     card.nextReviewTime = nextReview;
-    card.interval = Math.round((nextReview.getTime() - now.getTime()) / (1000 * 60)); // 保存间隔分钟数
+    card.interval = Math.round(
+      (nextReview.getTime() - now.getTime()) / (1000 * 60),
+    ); // 保存间隔分钟数
 
     // 可以根据easeFactor稍微调整间隔时间
     if (card.easeFactor > 2.0 && quality >= ReviewQuality.HARD) {
@@ -317,17 +328,21 @@ export class AnkiService {
   }
 
   async getDecks(userId: number) {
-    console.log(userId)
+    console.log(userId);
 
     const results = await this.manager.find(Deck, {
-      where: { user: { id: userId } }
+      where: { user: { id: userId } },
     });
 
     for (const deck of results) {
-      const stats = await this.calculateStats(deck.id)
-      await this.redisClient.set(this.getStatsCacheKey(deck.id), JSON.stringify(stats), { 'EX': 300 });
+      const stats = await this.calculateStats(deck.id);
+      await this.redisClient.set(
+        this.getStatsCacheKey(deck.id),
+        JSON.stringify(stats),
+        { EX: 300 },
+      );
 
-      Object.assign(deck, { stats })
+      Object.assign(deck, { stats });
     }
 
     return results;
@@ -338,8 +353,10 @@ export class AnkiService {
   }
 
   async updateCard(updateAnkiDto: UpdateAnkiDto): Promise<Card> {
-    // 查找要更新的卡片
-    const card = await this.cardRepository.findOne({ where: { id: updateAnkiDto.id } });
+    // 查找要更新卡片
+    const card = await this.cardRepository.findOne({
+      where: { id: updateAnkiDto.id },
+    });
 
     // 如果未找到卡片，抛出 NotFoundException
     if (!card) {
@@ -367,8 +384,9 @@ export class AnkiService {
     const lines = fileContent.split('\n');
 
     for (const line of lines) {
-      if (line.trim()) {  // Skip empty lines
-        const [front, back] = line.split('|').map(part => part.trim());
+      if (line.trim()) {
+        // Skip empty lines
+        const [front, back] = line.split('|').map((part) => part.trim());
         if (front && back) {
           const card = new Card();
           card.front = front;
@@ -378,7 +396,7 @@ export class AnkiService {
       }
     }
 
-    fs.unlinkSync(file.path);  // 删除临时文件
+    fs.unlinkSync(file.path); // 删除临时文件
 
     return cards;
   }
@@ -390,22 +408,34 @@ export class AnkiService {
     }
 
     // 为每个卡片设置对应的 deckId
-    const cardsToSave = cards.map(card => {
+    const cardsToSave = cards.map((card) => {
       card.deck = deck; // 假设 Card 实体有一个 deck 属性
       return card;
     });
 
     await this.cardRepository.save(cardsToSave);
   }
-  async createCard(dto: CreateAnkiDto & { originalName?: string, contentType?: ContentType }): Promise<Card> {
+  async createCard(
+    dto: CreateAnkiDto & { originalName?: string; contentType?: ContentType },
+  ): Promise<Card> {
     const { deckId, front, back, originalName, contentType } = dto;
-    return await this.createNormalCard(this.cardRepository, { deckId, front, back, contentType });
+    return await this.createNormalCard(this.cardRepository, {
+      deckId,
+      front,
+      back,
+      contentType,
+    });
   }
 
   //create a common card entity
   private async createNormalCard(
     cardRepository: Repository<Card>,
-    data: { deckId: number; front: string; back: string, contentType: ContentType }
+    data: {
+      deckId: number;
+      front: string;
+      back: string;
+      contentType: ContentType;
+    },
   ): Promise<Card> {
     const { deckId, front, back, contentType } = data;
 
@@ -417,7 +447,7 @@ export class AnkiService {
       card_type: CardType.NEW,
       easeFactor: 2.5,
       interval: 0,
-      repetitions: 0
+      repetitions: 0,
     });
   }
 
@@ -430,7 +460,7 @@ export class AnkiService {
       region: this.configService.getOrThrow('OSS_REGION'),
       accessKeyId: this.configService.getOrThrow('OSS_ACCESS_KEY_ID'),
       accessKeySecret: this.configService.getOrThrow('OSS_ACCESS_KEY_SECRET'),
-      bucket: this.configService.getOrThrow('OSS_BUCKET')
+      bucket: this.configService.getOrThrow('OSS_BUCKET'),
     });
     return AnkiService.ossClient;
   }
@@ -439,30 +469,36 @@ export class AnkiService {
   public async createDeckWithAudioForOss(
     file: Express.Multer.File,
     dto: SplitAudioDto,
-    userId: number
+    userId: number,
   ) {
     const cards: Card[] = [];
 
     try {
-      const newDeck = await this.addDeck({
-        name: dto.name,
-        description: dto.description,
-        deckType: DeckType.AUDIO
-      }, userId);
+      const newDeck = await this.addDeck(
+        {
+          name: dto.name,
+          description: dto.description,
+          deckType: DeckType.AUDIO,
+        },
+        userId,
+      );
 
       const ossPrefix = `decks/${newDeck.id}/audio`;
-      const segments = dto.text.split('\n').map(line => {
-        const match = line.match(/(\d+:\d+:\d+\.\d+)\|(.*?):(.*)/);
-        if (match) {
-          const [_, timestamp, speaker, text] = match;
-          const timeInSeconds = this.parseTimestamp(timestamp);
-          return {
-            timestamp: timeInSeconds,
-            text: `${speaker}: ${text.trim()}`
-          };
-        }
-        return null;
-      }).filter(Boolean);
+      const segments = dto.text
+        .split('\n')
+        .map((line) => {
+          const match = line.match(/(\d+:\d+:\d+\.\d+)\|(.*?):(.*)/);
+          if (match) {
+            const [_, timestamp, speaker, text] = match;
+            const timeInSeconds = this.parseTimestamp(timestamp);
+            return {
+              timestamp: timeInSeconds,
+              text: `${speaker}: ${text.trim()}`,
+            };
+          }
+          return null;
+        })
+        .filter(Boolean);
 
       for (let i = 0; i < segments.length; i++) {
         const segment = segments[i];
@@ -476,10 +512,8 @@ export class AnkiService {
           file.path,
           ossPath,
           segment.timestamp,
-          nextSegment ? nextSegment.timestamp - segment.timestamp : undefined
+          nextSegment ? nextSegment.timestamp - segment.timestamp : undefined,
         );
-
-
 
         const card = await this.createCard({
           deckId: newDeck.id,
@@ -492,19 +526,17 @@ export class AnkiService {
         cards.push(card);
       }
 
-      fs.unlinkSync(file.path);  // 删除临时文件
+      fs.unlinkSync(file.path); // 删除临时文件
 
       const stats = await this.calculateStats(newDeck.id);
       await this.redisClient.set(
         this.getStatsCacheKey(newDeck.id),
         JSON.stringify(stats),
-        { 'EX': 300 }
+        { EX: 300 },
       );
 
       return { deck: { ...newDeck, stats }, cards };
-
     } catch (error) {
-
       // 发生错误时删除已上传到OSS的文件
       for (const card of cards || []) {
         try {
@@ -563,18 +595,22 @@ export class AnkiService {
         fs.mkdirSync(dir, { recursive: true }); // recursive: true 表示递归创建
       }
 
-      console.log(`Uploaded audio to OSS: ${ossKey}`, tempOutputPath, startTime, duration, typeof duration);
-
+      console.log(
+        `Uploaded audio to OSS: ${ossKey}`,
+        tempOutputPath,
+        startTime,
+        duration,
+        typeof duration,
+      );
 
       await new Promise((resolve, reject) => {
-        const ffmpegInst = ffmpeg(audioPath)
-          .setStartTime(startTime)
+        const ffmpegInst = ffmpeg(audioPath).setStartTime(startTime);
 
         if (duration) {
-          ffmpegInst.setDuration(duration)
-
+          ffmpegInst.setDuration(duration);
         }
-        ffmpegInst.output(tempOutputPath)
+        ffmpegInst
+          .output(tempOutputPath)
           .on('end', () => {
             console.log('ffmpeg end');
             resolve(1);
@@ -586,81 +622,113 @@ export class AnkiService {
           .run();
       });
 
-
-
-
       // Upload stream directly to OSS
       await ossClient.put(ossKey, tempOutputPath);
 
-      // Get public URL 
+      // Get public URL
       const publicUrl = ossClient.signatureUrl(ossKey, {
-        expires: 31536000 // 1 year expiry
+        expires: 31536000, // 1 year expiry
       });
-      console.log(publicUrl, "publicUrl")
-      fs.unlinkSync(tempOutputPath);  // 删除临时文件
+      console.log(publicUrl, 'publicUrl');
+      fs.unlinkSync(tempOutputPath); // 删除临时文件
 
       return publicUrl;
-
     } catch (error) {
       console.error('Error in cutAndUploadAudioForOss:', error);
       throw new Error('Failed to process and upload audio');
     }
   }
 
-  public async createDeckWithPodcast(
+  // 执行播客切片插库任务
+  public async executePodcastTask(
     file: Express.Multer.File,
     dto: CreatePodcastDeckDto,
-    userId: number
+    userId: number,
+    newDeck: Deck,
   ): Promise<{ deck: Deck & { stats: any }; cards: Card[] }> {
-    if (file) {
-      return;
-    }
+    try {
+      //创建deck,先返回
+      // 发送初始化任务消息
+      this.websocketGateway.sendTaskInit(userId, newDeck.taskId);
+      if (dto.podcastType === PodcastType.AmericanLife) {
+        this.websocketGateway.sendProgress(
+          userId,
+          newDeck.taskId,
+          10,
+          'Processing This American Life podcast',
+        );
+        const result = await this.processThisAmericanLife(
+          dto,
+          newDeck,
+          (progress: number, status: string) => {
+            this.websocketGateway.sendProgress(
+              userId,
+              newDeck.taskId,
+              progress,
+              status,
+            );
+          },
+        );
 
-    if (dto.podcastType === PodcastType.AmericanLife) {
-      return await this.processThisAmericanLife(dto, userId);
-    }
+        return result;
+      }
 
-    if (dto.podcastType === PodcastType.Overthink) {
-      return
-      // await this.processOverthink(dto, userId);
-    }
+      if (dto.podcastType === PodcastType.Overthink) {
+        this.websocketGateway.sendProgress(
+          userId,
+          newDeck.taskId,
+          10,
+          'Processing Overthink podcast',
+        );
+        return;
+      }
+    } catch (error) {
+      // 更新状态为失败
+      await this.deckRepository.update(newDeck.id, {
+        status: DeckStatus.FAILED,
+      });
 
+      this.websocketGateway.sendProgress(
+        userId,
+        newDeck.taskId,
+        -1,
+        `Error: ${error.message}`,
+      );
+      throw error;
+    }
   }
 
-  private async processThisAmericanLife(dto: CreatePodcastDeckDto, userId: number): Promise<{ deck: Deck & { stats: any }; cards: Card[] }> {
+  private async processThisAmericanLife(
+    dto: CreatePodcastDeckDto,
+    newDeck: Deck,
+    onProgress: (progress: number, status: string) => void,
+  ): Promise<{ deck: Deck & { stats: any }; cards: Card[] }> {
     const cards: Card[] = [];
 
+    onProgress(15, 'Launching browser');
     const browser = await puppeteer.launch({
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      timeout: 60000, // Increase the timeout to 60 seconds (adjust as needed)
-      dumpio: true, // Enable logging
+      timeout: 60000,
+      dumpio: true,
     });
 
     try {
-      const newDeck = await this.addDeck(
-        {
-          name: dto.name,
-          description: dto.description,
-          deckType: DeckType.AUDIO
-        },
-        userId
-      );
-
+      onProgress(30, 'Loading podcast page');
       const page = await browser.newPage();
-
       await page.goto(dto.podcastUrl);
 
+      onProgress(40, 'Extracting conversations');
       // 提取act-inner中的对话
-      const conversations = await page.$$eval(".act-inner > div", (divs) =>
+      const conversations = await page.$$eval('.act-inner > div', (divs) =>
         divs.map((div) => {
-          const roleElement = div.querySelector("h4");
-          const role = roleElement ? roleElement.textContent.trim() : "";
+          const roleElement = div.querySelector('h4');
+          const role = roleElement ? roleElement.textContent.trim() : '';
 
-          const paragraphs = Array.from(div.querySelectorAll("p"));
+          const paragraphs = Array.from(div.querySelectorAll('p'));
           const texts = paragraphs.map((p) => p.textContent.trim());
-          const begins = paragraphs.map((p) => p.getAttribute("begin"));
+          const begins = paragraphs.map((p) => p.getAttribute('begin'));
           return { role, texts, begins };
-        })
+        }),
       );
 
       const totalConversations = [];
@@ -673,19 +741,19 @@ export class AnkiService {
         });
       });
 
-      const main = await page.$(".full-episode.goto.goto-episode");
+      const main = await page.$('.full-episode.goto.goto-episode');
       const href = await page.evaluate(
-        (element) => element.getAttribute("href"),
-        main
+        (element) => element.getAttribute('href'),
+        main,
       );
       await page.goto(`https://www.thisamericanlife.org${href}`);
 
       const downloadLink = await page.$eval(
-        ".download .links-processed.internal",
-        (el: HTMLAnchorElement) => el.href
+        '.download .links-processed.internal',
+        (el: HTMLAnchorElement) => el.href,
       );
 
-      const downloadPath = path.resolve(process.cwd(), "downloads");
+      const downloadPath = path.resolve(process.cwd(), 'downloads');
       if (!fs.existsSync(downloadPath)) {
         fs.mkdirSync(downloadPath);
       }
@@ -700,7 +768,7 @@ export class AnkiService {
       if (match) {
         const audioUrl = match[0];
         const response = await axios.get(`https://${audioUrl}`, {
-          responseType: "stream",
+          responseType: 'stream',
         });
 
         const fileName = path.basename(audioUrl);
@@ -710,15 +778,24 @@ export class AnkiService {
         response.data.pipe(writer);
 
         await new Promise((resolve, reject) => {
-          writer.on("finish", resolve);
-          writer.on("error", reject);
+          writer.on('finish', resolve);
+          writer.on('error', reject);
         });
 
         const ossPrefix = `decks/${newDeck.id}/audio`;
+        onProgress(50, 'Processing audio segments');
+        let processedSegments = 0;
+        const totalSegments = totalConversations.length;
 
         for (let i = 0; i < totalConversations.length; i++) {
           const segment = totalConversations[i];
           const nextSegment = totalConversations[i + 1];
+
+          onProgress(
+            50 + Math.floor((i / totalSegments) * 40),
+            `Processing segment ${i + 1} of ${totalSegments}`,
+          );
+          console.log('Processing segment', segment, 'segment');
 
           const ossFileName = `${uuidv4()}.mp3`;
           const ossPath = `${ossPrefix}/${ossFileName}`;
@@ -732,9 +809,9 @@ export class AnkiService {
             filePath,
             ossPath,
             startTime,
-            duration
+            duration,
           );
-          console.log(audioUrl, "audioUrl")
+          console.log(audioUrl, 'audioUrl');
 
           const card = await this.createCard({
             deckId: newDeck.id,
@@ -745,20 +822,25 @@ export class AnkiService {
           });
 
           cards.push(card);
+
+          processedSegments++;
         }
-
-        fs.unlinkSync(filePath);  // 删除临时文件
-
+        fs.unlinkSync(filePath); // 删除临时文件
+        onProgress(90, 'Calculating statistics');
         const stats = await this.calculateStats(newDeck.id);
         await this.redisClient.set(
           this.getStatsCacheKey(newDeck.id),
           JSON.stringify(stats),
-          { EX: 300 }
+          { EX: 300 },
         );
 
+        // 更新状态为完成
+        await this.deckRepository.update(newDeck.id, {
+          status: DeckStatus.COMPLETED,
+        });
+        onProgress(100, 'Processing complete');
+
         return { deck: { ...newDeck, stats }, cards };
-      } else {
-        throw new Error("No audio file found");
       }
     } catch (error) {
       for (const card of cards || []) {

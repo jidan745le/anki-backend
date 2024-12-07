@@ -1,14 +1,28 @@
 // src/entities/deck.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, OneToMany, CreateDateColumn, UpdateDateColumn,ManyToOne } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  OneToMany,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+} from 'typeorm';
 import { Card } from './card.entity';
-import {User} from "../../user/entities/user.entity"
+import { User } from '../../user/entities/user.entity';
 
 export enum DeckType {
   NORMAL = 'normal',
   AUDIO = 'audio',
 }
 
-@Entity('decks') 
+export enum DeckStatus {
+  PROCESSING = 'processing',
+  COMPLETED = 'completed',
+  FAILED = 'failed',
+}
+
+@Entity('decks')
 export class Deck {
   @PrimaryGeneratedColumn()
   id: number;
@@ -24,7 +38,7 @@ export class Deck {
     enum: DeckType,
     default: DeckType.NORMAL,
   })
-   deckType: DeckType;
+  deckType: DeckType;
 
   @CreateDateColumn()
   createdAt: Date;
@@ -32,9 +46,19 @@ export class Deck {
   @UpdateDateColumn()
   updatedAt: Date;
 
-  @OneToMany(() => Card, card => card.deck)
+  @OneToMany(() => Card, (card) => card.deck)
   cards: Card[];
 
-  @ManyToOne(() => User,user => user.decks)
-  user:User
+  @ManyToOne(() => User, (user) => user.decks)
+  user: User;
+
+  @Column({ nullable: true })
+  taskId: string;
+
+  @Column({
+    type: 'enum',
+    enum: DeckStatus,
+    default: DeckStatus.COMPLETED,
+  })
+  status: DeckStatus;
 }
