@@ -649,7 +649,6 @@ export class AnkiService {
     try {
       //创建deck,先返回
       // 发送初始化任务消息
-      this.websocketGateway.sendTaskInit(userId, newDeck.taskId);
       if (dto.podcastType === PodcastType.AmericanLife) {
         this.websocketGateway.sendProgress(
           userId,

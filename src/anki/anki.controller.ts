@@ -31,11 +31,14 @@ import {
 import { CreatePodcastDeckDto } from './dto/create-podcast-deck.dto';
 import { v4 as uuidv4 } from 'uuid';
 import { DeckStatus, DeckType } from './entities/deck.entity';
-
+import { WebsocketGateway } from '../websocket/websocket.gateway';
 @UseGuards(LoginGuard)
 @Controller('anki')
 export class AnkiController {
-  constructor(private readonly ankiService: AnkiService) {}
+  constructor(
+    private readonly ankiService: AnkiService,
+    private readonly websocketGateway: WebsocketGateway,
+  ) {}
 
   @Get('getNextCard')
   async getNextCard(@Query('deckId') deckId: string) {
@@ -237,10 +240,15 @@ export class AnkiController {
         taskId,
         description: deck.description,
         deckType: DeckType.AUDIO,
-        status: DeckStatus.PROCESSING, // 设置初始状态
+        status: DeckStatus.PROCESSING,
       },
       userId,
     );
+
+    // 使用 process.nextTick 确保在响应返回后再发送 WebSocket 消息
+    setTimeout(() => {
+      this.websocketGateway.sendTaskInit(userId, taskId);
+    }, 1000);
 
     // Start the async process
     this.ankiService
