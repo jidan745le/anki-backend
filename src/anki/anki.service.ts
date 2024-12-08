@@ -290,41 +290,77 @@ export class AnkiService {
     const nextReview = new Date(now);
 
     if (quality < ReviewQuality.HARD) {
-      // 如果回答困难
-      // 5分钟后复习
-      nextReview.setMinutes(nextReview.getMinutes() + 5);
+      // 如果回答困难，重置复习进度
+      card.interval = 60 * 24; // 1天
+      nextReview.setMinutes(nextReview.getMinutes() + card.interval);
       card.card_type = CardType.REVIEW;
       // 降低难度因子，最低为1.3
       card.easeFactor = Math.max(1.3, card.easeFactor - 0.2);
     } else {
       if (card.card_type === CardType.NEW) {
-        // 新卡片第一次复习，30分钟后
-        nextReview.setMinutes(nextReview.getMinutes() + 30);
+        // 新卡片第一次复习
+        card.interval = 60 * 24; // 1天
         card.card_type = CardType.REVIEW;
       } else {
-        // 已经复习过的卡片，30分钟后
-        nextReview.setMinutes(nextReview.getMinutes() + 30);
+        // 根据当前间隔和难度因子计算新间隔
+        const intervalMultiplier = this.calculateIntervalMultiplier(
+          card.repetitions,
+          card.easeFactor,
+          quality,
+        );
+        card.interval = Math.round(
+          Math.max(card.interval * intervalMultiplier, 1),
+        );
       }
 
-      // 保留SM-2算法的难度因子调整逻辑
+      // 应用新间隔
+      nextReview.setMinutes(nextReview.getMinutes() + card.interval);
+
+      // 更新难度因子
       card.easeFactor =
         card.easeFactor + (0.1 - (3 - quality) * (0.08 + (3 - quality) * 0.02));
-      card.easeFactor = Math.max(1.3, Math.min(2.5, card.easeFactor)); // 保持在1.3-2.5之间
+      card.easeFactor = Math.max(1.3, Math.min(2.5, card.easeFactor));
     }
 
     card.nextReviewTime = nextReview;
-    card.interval = Math.round(
-      (nextReview.getTime() - now.getTime()) / (1000 * 60),
-    ); // 保存间隔分钟数
-
-    // 可以根据easeFactor稍微调整间隔时间
-    if (card.easeFactor > 2.0 && quality >= ReviewQuality.HARD) {
-      // 如果难度因子高且回答正确，可以稍微增加间隔
-      nextReview.setMinutes(nextReview.getMinutes() + 5);
-    }
 
     // 保存更新后的卡片
     return await this.cardRepository.save(card);
+  }
+
+  private calculateIntervalMultiplier(
+    repetitions: number,
+    easeFactor: number,
+    quality: ReviewQuality,
+  ): number {
+    // 基础乘数基于复习质量
+    let baseMultiplier = 1;
+
+    switch (quality) {
+      case ReviewQuality.EASY:
+        baseMultiplier = 2.5;
+        break;
+      case ReviewQuality.GOOD:
+        baseMultiplier = 2.0;
+        break;
+      case ReviewQuality.HARD:
+        baseMultiplier = 1.5;
+        break;
+      default:
+        baseMultiplier = 1;
+    }
+
+    // 根据复习次数调整间隔
+    const repetitionFactor = Math.min(repetitions / 2, 2); // 最多翻倍
+
+    // 考虑难度因子的影响
+    const easeFactorNormalized = (easeFactor - 1.3) / 1.2; // 归一化到0-1范围
+
+    // 综合计算最终乘数
+    const finalMultiplier =
+      baseMultiplier * (1 + repetitionFactor) * (1 + easeFactorNormalized);
+
+    return finalMultiplier;
   }
 
   async getDecks(userId: number) {
