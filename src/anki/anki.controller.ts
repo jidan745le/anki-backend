@@ -32,6 +32,7 @@ import { CreatePodcastDeckDto } from './dto/create-podcast-deck.dto';
 import { v4 as uuidv4 } from 'uuid';
 import { DeckStatus, DeckType } from './entities/deck.entity';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { DeckConfigDto } from './dto/deck-config.dto';
 @UseGuards(LoginGuard)
 @Controller('anki')
 export class AnkiController {
@@ -263,5 +264,21 @@ export class AnkiController {
       deckId: newDeck.id,
       message: 'Processing started',
     };
+  }
+
+  @Post('configureDeck/:deckId')
+  async configureDeck(
+    @Param('deckId') deckId: number,
+    @Body(ValidationPipe) config: DeckConfigDto,
+    @Req() req,
+  ) {
+    const userId: number = req?.user?.id;
+    return await this.ankiService.configureDeck(deckId, config, userId);
+  }
+
+  @Get('getDeckConfig/:deckId')
+  async getDeckConfig(@Param('deckId') deckId: number, @Req() req) {
+    const userId: number = req?.user?.id;
+    return await this.ankiService.getDeckConfig(deckId, userId);
   }
 }

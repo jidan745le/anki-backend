@@ -51,6 +51,14 @@ export class WebsocketGateway implements OnGatewayConnection {
       Logger.log(`Current connections in room user-${userId}: ${room?.size}`);
     } catch (error) {
       console.error('Authentication failed:', error.message);
+      // client.emit('error', {
+      //   message: error.message,
+      // });
+      client.emit('error', {
+        type: 'unauthorized',
+        message: error.message,
+      });
+
       client.disconnect();
     }
   }

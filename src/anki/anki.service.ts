@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException, Inject, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  Inject,
+  Logger,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectEntityManager, InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository, LessThan } from 'typeorm';
 import {
@@ -27,6 +33,8 @@ import axios from 'axios';
 import { PodcastType } from './dto/create-podcast-deck.dto';
 import { DeckType } from './entities/deck.entity';
 import { WebsocketGateway } from 'src/websocket/websocket.gateway';
+import { DeckSettings } from './entities/deck-settings.entity';
+import { DeckConfigDto } from './dto/deck-config.dto';
 
 @Injectable()
 export class AnkiService {
@@ -61,6 +69,9 @@ export class AnkiService {
 
   @InjectRepository(Deck)
   private readonly deckRepository: Repository<Deck>;
+
+  @InjectRepository(DeckSettings)
+  private readonly deckSettingsRepository: Repository<DeckSettings>;
 
   @Inject('REDIS_CLIENT')
   private readonly redisClient: RedisClientType;
@@ -269,6 +280,36 @@ export class AnkiService {
     });
   }
 
+  // 添加获取deck settings的缓存方法
+  private async getCachedDeckSettings(deckId: number): Promise<DeckSettings> {
+    const cacheKey = `deck:${deckId}:settings`;
+
+    // 尝试从缓存获取
+    const cachedSettings = await this.redisClient.get(cacheKey);
+    if (cachedSettings) {
+      return JSON.parse(cachedSettings);
+    }
+
+    // 如果缓存中没有，从数据库获取
+    const settings = await this.deckSettingsRepository.findOne({
+      where: { deck: { id: deckId } },
+    });
+
+    // 使用默认值或数据库中的值
+    const finalSettings = settings || {
+      hardInterval: 1440, // 默认1天
+      easyInterval: 4320, // 默认3天
+    };
+
+    // 缓存结果，设置1小时过期
+    await this.redisClient.set(cacheKey, JSON.stringify(finalSettings), {
+      EX: 3600, // 1小时过期
+    });
+
+    return finalSettings as DeckSettings;
+  }
+
+  // 修改 updateCardWithSM2 方法
   async updateCardWithSM2(
     deckId: number,
     cardId: number,
@@ -282,6 +323,9 @@ export class AnkiService {
     const now = new Date();
     this.updateStatsCache(deckId, card.card_type);
 
+    // 获取缓存的deck settings
+    const deckSettings = await this.getCachedDeckSettings(deckId);
+
     // 更新复习次数
     card.repetitions = (card.repetitions || 0) + 1;
     card.lastReviewTime = now;
@@ -291,7 +335,7 @@ export class AnkiService {
 
     if (quality < ReviewQuality.HARD) {
       // 如果回答困难，重置复习进度
-      card.interval = 60 * 24; // 1天
+      card.interval = deckSettings.hardInterval;
       nextReview.setMinutes(nextReview.getMinutes() + card.interval);
       card.card_type = CardType.REVIEW;
       // 降低难度因子，最低为1.3
@@ -299,7 +343,7 @@ export class AnkiService {
     } else {
       if (card.card_type === CardType.NEW) {
         // 新卡片第一次复习
-        card.interval = 60 * 24; // 1天
+        card.interval = deckSettings.easyInterval;
         card.card_type = CardType.REVIEW;
       } else {
         // 根据当前间隔和难度因子计算新间隔
@@ -889,5 +933,83 @@ export class AnkiService {
     } finally {
       await browser.close();
     }
+  }
+
+  // 修改 configureDeck 方法以清除缓存
+  async configureDeck(
+    deckId: number,
+    config: DeckConfigDto,
+    userId: number,
+  ): Promise<DeckSettings> {
+    const deck = await this.deckRepository.findOne({
+      where: { id: deckId },
+      relations: ['user'],
+    });
+
+    if (!deck) {
+      throw new NotFoundException(`Deck with ID ${deckId} not found`);
+    }
+
+    // Check if user owns the deck
+    if (deck.user.id !== userId) {
+      throw new ForbiddenException(
+        'You do not have permission to configure this deck',
+      );
+    }
+
+    let settings = await this.deckSettingsRepository.findOne({
+      where: { deck: { id: deckId } },
+    });
+
+    if (!settings) {
+      settings = this.deckSettingsRepository.create({
+        deck,
+        ...config,
+      });
+    } else {
+      Object.assign(settings, config);
+    }
+
+    const settingsResult = await this.deckSettingsRepository.save(settings);
+
+    // 更新后清除缓存
+    const cacheKey = `deck:${deckId}:settings`;
+    await this.redisClient.del(cacheKey);
+
+    return settingsResult;
+  }
+
+  async getDeckConfig(deckId: number, userId: number): Promise<DeckSettings> {
+    const deck = await this.deckRepository.findOne({
+      where: { id: deckId },
+      relations: ['user'],
+    });
+
+    if (!deck) {
+      throw new NotFoundException(`Deck with ID ${deckId} not found`);
+    }
+
+    // Check if user owns the deck
+    if (deck.user.id !== userId) {
+      throw new ForbiddenException(
+        'You do not have permission to view this deck configuration',
+      );
+    }
+
+    const settings = await this.deckSettingsRepository.findOne({
+      where: { deck: { id: deckId } },
+    });
+
+    if (!settings) {
+      // Return default settings if none exist
+      return {
+        id: null,
+        hardInterval: 1440, // 1 day in minutes
+        easyInterval: 4320, // 3 days in minutes
+        deck: deck,
+      };
+    }
+
+    return settings;
   }
 }
