@@ -4,6 +4,9 @@ services:
     image: fe-container:first
     ports:
       - 80:80
+      - 443:443
+    volumes:
+      - /etc/letsencrypt/live/www.myanki.cc/:/etc/nginx/ssl/
     depends_on:
       - nest-app
     networks:
