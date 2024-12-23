@@ -169,7 +169,7 @@ export class AnkiService {
       .where('card.deck_id = :deckId', { deckId })
       .andWhere('card.card_type = :type', { type: CardType.REVIEW })
       .andWhere('card.nextReviewTime <= :now', { now })
-      .orderBy('RAND()') // MySQL的随机排序
+      .orderBy('card.nextReviewTime', 'ASC') // Changed from RAND()
       .take(1)
       .getOne();
 
