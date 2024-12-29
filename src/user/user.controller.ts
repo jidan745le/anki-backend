@@ -13,6 +13,8 @@ import {
   Logger,
   HttpStatus,
   UseGuards,
+  Query,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { JwtService } from '@nestjs/jwt';
@@ -46,6 +48,19 @@ export class UserController {
           },
         });
         res.setHeader('token', token);
+
+        const refreshToken = await this.jwtService.signAsync(
+          {
+            user: {
+              id: foundUser.id,
+            },
+          },
+          {
+            expiresIn: '7d',
+          },
+        );
+
+        res.setHeader('refreshToken', refreshToken);
         return 'login success';
       } else {
         return 'login fail';
@@ -55,6 +70,7 @@ export class UserController {
       throw err;
     }
   }
+
   @Post('register')
   async register(
     @Body(ValidationPipe) user: RegisterDto,
@@ -70,7 +86,19 @@ export class UserController {
             username: foundUser.username,
           },
         });
+
+        const refreshToken = await this.jwtService.signAsync(
+          {
+            user: {
+              id: foundUser.id,
+            },
+          },
+          {
+            expiresIn: '7d',
+          },
+        );
         res.setHeader('token', token);
+        res.setHeader('refreshToken', refreshToken);
         return 'success';
       } else {
         throw new HttpException('failure', 200);
@@ -79,6 +107,7 @@ export class UserController {
       throw err;
     }
   }
+
   @UseGuards(LoginGuard)
   @Post('logout')
   async logout(@Req() req) {
@@ -93,6 +122,40 @@ export class UserController {
     } catch (error) {
       Logger.error('Logout error:', error);
       throw error;
+    }
+  }
+
+  @Get('refresh')
+  async refresh(@Query('refresh_token') refreshToken: string) {
+    try {
+      const data = this.jwtService.verify(refreshToken);
+
+      const user = await this.userService.findUserById(data.user.id);
+
+      const access_token = this.jwtService.sign({
+        user: {
+          id: user.id,
+          username: user.username,
+        },
+      });
+
+      const refresh_token = this.jwtService.sign(
+        {
+          user: {
+            id: user.id,
+          },
+        },
+        {
+          expiresIn: '7d',
+        },
+      );
+
+      return {
+        access_token,
+        refresh_token,
+      };
+    } catch (e) {
+      throw new UnauthorizedException('token 已失效，请重新登录');
     }
   }
 }

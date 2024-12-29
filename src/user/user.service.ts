@@ -1,6 +1,12 @@
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
-import { BadRequestException, HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
@@ -14,7 +20,6 @@ function md5(str) {
 
 @Injectable()
 export class UserService {
-
   private logger = new Logger();
 
   @InjectRepository(User)
@@ -25,10 +30,10 @@ export class UserService {
       username: user.username,
     });
 
-    if(!foundUser) {
+    if (!foundUser) {
       throw new HttpException('用户名不存在', 200);
     }
-    if(foundUser.password !== md5(user.password)) {
+    if (foundUser.password !== md5(user.password)) {
       throw new HttpException('密码错误', 200);
     }
     return foundUser;
@@ -36,10 +41,10 @@ export class UserService {
 
   async register(user: RegisterDto) {
     const foundUser = await this.userRepository.findOneBy({
-      username: user.username
+      username: user.username,
     });
 
-    if(foundUser) {
+    if (foundUser) {
       throw new HttpException('用户已存在', 200);
     }
 
@@ -50,9 +55,13 @@ export class UserService {
     try {
       await this.userRepository.save(newUser);
       return user;
-    } catch(e) {
+    } catch (e) {
       this.logger.error(e, UserService);
       throw new BadRequestException('用户已存在');
     }
+  }
+
+  async findUserById(id: number) {
+    return await this.userRepository.findOneBy({ id });
   }
 }

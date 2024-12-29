@@ -21,19 +21,20 @@ export class RedisModule {
           useFactory: async (configService: ConfigService) => {
             const client = createClient({
               socket: {
-                host: configService.get('NODE_ENV') === 'development' 
-                  ? 'localhost'
-                  : configService.getOrThrow('REDIS_HOST'),
-                port: configService.getOrThrow('REDIS_PORT')
-              }
+                host:
+                  configService.get('NODE_ENV') === 'development'
+                    ? 'localhost'
+                    : configService.getOrThrow('REDIS_HOST'),
+                port: configService.getOrThrow('REDIS_PORT'),
+              },
             });
             await client.connect();
             return client;
           },
-          inject: [ConfigService]
-        }
+          inject: [ConfigService],
+        },
       ],
-      exports: ['REDIS_CLIENT']
+      exports: ['REDIS_CLIENT'],
     };
   }
 }
