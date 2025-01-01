@@ -105,7 +105,6 @@ export class AuthService {
               authUserId: ${user.authUserId},
               email: '${user.email || ''}',
             }, '*');
-            window.close();
           </script>
         </body>
       </html>
