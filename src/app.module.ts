@@ -16,6 +16,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { WebsocketModule } from './websocket/websocket.module';
 import * as path from 'path';
 import { DeckSettings } from './anki/entities/deck-settings.entity';
+import { AuthModule } from './auth/auth.module';
+import { AuthUser } from './auth/entities/auth-user.entity';
 
 @Module({
   imports: [
@@ -40,7 +42,7 @@ import { DeckSettings } from './anki/entities/deck-settings.entity';
         database: configService.getOrThrow('DB_DATABASE'),
         synchronize: false,
         migrations: ['dist/migrations/*.js'],
-        entities: [User, Card, Deck, DeckSettings],
+        entities: [User, AuthUser, Card, Deck, DeckSettings],
         poolSize: configService.getOrThrow('DB_POOL_SIZE'),
         connectorPackage: 'mysql2',
         extra: {
@@ -58,6 +60,7 @@ import { DeckSettings } from './anki/entities/deck-settings.entity';
     RedisModule,
     FileModule,
     WebsocketModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [

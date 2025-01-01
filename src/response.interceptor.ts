@@ -8,12 +8,24 @@ import {
 import { map } from 'rxjs/operators';
 import { catchError, Observable, throwError, of } from 'rxjs';
 import { tap } from 'rxjs/operators';
+import { Reflector } from '@nestjs/core';
 
 @Injectable()
 export class ResponseInterceptor implements NestInterceptor {
   private readonly logger = new Logger('HTTP');
 
+  constructor(private reflector: Reflector) {}
+
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const skipInterceptors = this.reflector.get<boolean>(
+      'skipInterceptors',
+      context.getHandler(),
+    );
+
+    if (skipInterceptors) {
+      return next.handle();
+    }
+
     const startTime = Date.now();
     const request = context.switchToHttp().getRequest();
     const { method, url } = request;

@@ -16,8 +16,16 @@ export const dataSource = new DataSource({
   password: isDevelopment ? '123456' : process.env.DB_PASSWORD,
   database: isDevelopment ? 'anki' : process.env.DB_DATABASE,
   entities: isDevelopment
-    ? ['src/user/entities/*.entity.ts', 'src/anki/entities/*.entity.ts']
-    : ['user/entities/*.entity.js', 'anki/entities/*.entity.js'],
+    ? [
+        'src/user/entities/*.entity.ts',
+        'src/anki/entities/*.entity.ts',
+        'src/auth/entities/*',
+      ]
+    : [
+        'user/entities/*.entity.js',
+        'anki/entities/*.entity.js',
+        'auth/entities/*.entity.js',
+      ],
   poolSize: 10,
   migrations: isDevelopment ? ['src/migrations/*.ts'] : ['migrations/*.js'],
   synchronize: false,

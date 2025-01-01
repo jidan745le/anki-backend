@@ -49,7 +49,9 @@ export class Deck {
   @OneToMany(() => Card, (card) => card.deck)
   cards: Card[];
 
-  @ManyToOne(() => User, (user) => user.decks)
+  @ManyToOne(() => User, (user) => user.decks, {
+    onDelete: 'CASCADE',
+  })
   user: User;
 
   @Column({ nullable: true })
