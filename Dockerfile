@@ -14,7 +14,7 @@ RUN apk add --no-cache \
     ttf-freefont \
     ffmpeg
 
-RUN npm install
+RUN npm install --legacy-peer-deps
 
 COPY . .
 
@@ -38,7 +38,7 @@ WORKDIR /app
 
 USER appuser
 
-RUN npm install --production
+RUN npm install --production --legacy-peer-deps
 
 # 切换到非 root 用户
 
