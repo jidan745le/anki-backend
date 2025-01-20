@@ -37,7 +37,7 @@ COPY --from=build-stage --chown=appuser:appgroup /app/package.json /app/package.
 WORKDIR /app
 
 USER appuser
-
+RUN npm i -g ts-node typescript
 RUN npm install --production --legacy-peer-deps
 
 # 切换到非 root 用户
