@@ -20,11 +20,13 @@ export const dataSource = new DataSource({
         'src/user/entities/*.entity.ts',
         'src/anki/entities/*.entity.ts',
         'src/auth/entities/*',
+        'src/aichat/entities/*',
       ]
     : [
         'user/entities/*.entity.js',
         'anki/entities/*.entity.js',
         'auth/entities/*.entity.js',
+        'aichat/entities/*.entity.js',
       ],
   poolSize: 10,
   migrations: isDevelopment ? ['src/migrations/*.ts'] : ['migrations/*.js'],

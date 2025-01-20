@@ -18,6 +18,9 @@ import * as path from 'path';
 import { DeckSettings } from './anki/entities/deck-settings.entity';
 import { AuthModule } from './auth/auth.module';
 import { AuthUser } from './auth/entities/auth-user.entity';
+import { AichatModule } from './aichat/aichat.module';
+import { Chat } from './aichat/entities/chat.entity';
+import { ChatMessage } from './aichat/entities/chat-message.entity';
 
 @Module({
   imports: [
@@ -42,7 +45,7 @@ import { AuthUser } from './auth/entities/auth-user.entity';
         database: configService.getOrThrow('DB_DATABASE'),
         synchronize: false,
         migrations: ['dist/migrations/*.js'],
-        entities: [User, AuthUser, Card, Deck, DeckSettings],
+        entities: [User, AuthUser, Card, Deck, DeckSettings, Chat, ChatMessage],
         poolSize: configService.getOrThrow('DB_POOL_SIZE'),
         connectorPackage: 'mysql2',
         extra: {
@@ -61,6 +64,7 @@ import { AuthUser } from './auth/entities/auth-user.entity';
     FileModule,
     WebsocketModule,
     AuthModule,
+    AichatModule,
   ],
   controllers: [AppController],
   providers: [

@@ -725,7 +725,7 @@ export class AnkiService {
     dto: CreatePodcastDeckDto,
     userId: number,
     newDeck: Deck,
-  ): Promise<{ deck: Deck & { stats: any }; cards: Card[] }> {
+  ): Promise<{ deck: Partial<Deck> & { stats: any }; cards: Card[] }> {
     try {
       //创建deck,先返回
       // 发送初始化任务消息
@@ -781,7 +781,7 @@ export class AnkiService {
     dto: CreatePodcastDeckDto,
     newDeck: Deck,
     onProgress: (progress: number, status: string) => void,
-  ): Promise<{ deck: Deck & { stats: any }; cards: Card[] }> {
+  ): Promise<{ deck: Partial<Deck> & { stats: any }; cards: Card[] }> {
     const cards: Card[] = [];
 
     onProgress(15, 'Launching browser');

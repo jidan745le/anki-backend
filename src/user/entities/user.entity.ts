@@ -35,6 +35,6 @@ export class User {
   })
   updateTime: Date;
 
-  @OneToMany(() => Deck, (deck) => deck.id)
+  @OneToMany(() => Deck, (deck) => deck.user)
   decks: Deck[];
 }

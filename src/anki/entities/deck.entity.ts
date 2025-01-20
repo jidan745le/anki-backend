@@ -7,9 +7,11 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   ManyToOne,
+  BeforeInsert,
 } from 'typeorm';
 import { Card } from './card.entity';
 import { User } from '../../user/entities/user.entity';
+import { v4 as uuidv4 } from 'uuid';
 
 export enum DeckType {
   NORMAL = 'normal',
@@ -26,6 +28,14 @@ export enum DeckStatus {
 export class Deck {
   @PrimaryGeneratedColumn()
   id: number;
+
+  @Column({
+    type: 'varchar',
+    length: 36,
+    unique: true,
+    default: () => '(UUID())',
+  })
+  uuid: string;
 
   @Column({ length: 100 })
   name: string;
@@ -63,4 +73,11 @@ export class Deck {
     default: DeckStatus.COMPLETED,
   })
   status: DeckStatus;
+
+  @BeforeInsert()
+  generateUuid() {
+    if (!this.uuid) {
+      this.uuid = uuidv4();
+    }
+  }
 }
