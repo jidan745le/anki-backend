@@ -523,7 +523,8 @@ export class AnkiService {
   ): Promise<Card> {
     const { deckId, front, back, contentType } = data;
 
-    return await cardRepository.save({
+    // 先创建实体实例
+    const card = cardRepository.create({
       deck: { id: deckId },
       frontType: contentType || ContentType.TEXT,
       front,
@@ -533,6 +534,9 @@ export class AnkiService {
       interval: 0,
       repetitions: 0,
     });
+
+    // 保存实例
+    return await cardRepository.save(card);
   }
 
   public createOSSClient() {
