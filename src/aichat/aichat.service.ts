@@ -92,6 +92,10 @@ export class AichatService {
           await queryRunner.manager.save(chat);
         }
         this.logger.debug(`Created new chat with ID: ${chat.id}`);
+      } else if (dto.chatId) {
+        chat = await queryRunner.manager.findOne(Chat, {
+          where: { uuid: dto.chatId },
+        });
       }
 
       this.logger.debug(`Saving user message for chat ID: ${chat.id}`);
@@ -119,7 +123,7 @@ export class AichatService {
           content: msg.content,
         })),
       ];
-      this.logger.debug(`History: ${JSON.stringify(messages)}`);
+      this.logger.debug(`History: ${JSON.stringify(messages, null, 2)}`);
 
       this.logger.debug(`Calling OpenAI API with model: ${dto.model}`);
       const completion = await this.openai.chat.completions.create({

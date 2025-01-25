@@ -32,7 +32,7 @@ export class ResponseInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       catchError((err) => {
-        console.log('err212312312', err);
+        console.log(err, 'err');
 
         if (err.getStatus && err.getStatus() === 200) {
           return of({ message: err.getResponse(), error: true });
@@ -41,6 +41,7 @@ export class ResponseInterceptor implements NestInterceptor {
       }),
       map((data) => {
         if (data?.message && data?.error) {
+          console.log('dataerr', data);
           return {
             success: false,
             message: data.message,

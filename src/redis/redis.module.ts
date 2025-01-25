@@ -23,7 +23,7 @@ export class RedisModule {
               socket: {
                 host:
                   configService.get('NODE_ENV') === 'development'
-                    ? 'localhost'
+                    ? '127.0.0.1'
                     : configService.getOrThrow('REDIS_HOST'),
                 port: configService.getOrThrow('REDIS_PORT'),
               },

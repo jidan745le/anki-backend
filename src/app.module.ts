@@ -37,7 +37,7 @@ import { ChatMessage } from './aichat/entities/chat-message.entity';
         type: 'mysql',
         host:
           configService.get('NODE_ENV') === 'development'
-            ? 'localhost'
+            ? '127.0.0.1'
             : configService.getOrThrow('DB_HOST'),
         port: configService.getOrThrow('DB_PORT'),
         username: configService.getOrThrow('DB_USERNAME'),

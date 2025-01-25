@@ -13,6 +13,7 @@ export class CreateChatMessageDto {
   @IsUUID()
   chatId: string;
 
+  @IsOptional()
   @IsUUID()
   cardId: string;
 

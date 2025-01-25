@@ -152,6 +152,7 @@ export class AnkiService {
     if (Math.random() < 0.7) {
       const newCard = await this.cardRepository
         .createQueryBuilder('card')
+        .leftJoinAndSelect('card.chat', 'chat')
         .where('card.deck_id = :deckId', { deckId })
         .andWhere('card.card_type = :type', { type: CardType.NEW })
         .orderBy('RAND()') // MySQL的随机排序
@@ -166,6 +167,7 @@ export class AnkiService {
     // 30%的概率或没有新卡片时，随机获取一张需要复习的卡片
     const reviewCard = await this.cardRepository
       .createQueryBuilder('card')
+      .leftJoinAndSelect('card.chat', 'chat')
       .where('card.deck_id = :deckId', { deckId })
       .andWhere('card.card_type = :type', { type: CardType.REVIEW })
       .andWhere('card.nextReviewTime <= :now', { now })
@@ -180,6 +182,7 @@ export class AnkiService {
     // 如果没有复习卡片，返回新卡片
     const fallbackNewCard = await this.cardRepository
       .createQueryBuilder('card')
+      .leftJoinAndSelect('card.chat', 'chat')
       .where('card.deck_id = :deckId', { deckId })
       .andWhere('card.card_type = :type', { type: CardType.NEW })
       .orderBy('RAND()') // MySQL的随机排序
@@ -238,6 +241,7 @@ export class AnkiService {
 
     const card = await this.cardRepository
       .createQueryBuilder('card')
+      .leftJoinAndSelect('card.chat', 'chat')
       .where('card.deck_id = :deckId', { deckId })
       .andWhere('card.nextReviewTime <= :now', { now })
       .orderBy('card.id', 'ASC')
