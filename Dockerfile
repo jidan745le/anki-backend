@@ -1,14 +1,8 @@
-FROM node:18.17-alpine3.17 as build-stage
+FROM node:18.0-alpine3.14 as build-stage
 
 WORKDIR /app
-# 安装指定版本的 npm
-RUN npm install -g npm@10.2.3
-
-# 验证 npm 版本
-RUN echo "NPM Version:" && npm -v
 
 COPY package.json .
-COPY package-lock.json .
 
 RUN apk add --no-cache \
     chromium \
@@ -27,7 +21,7 @@ COPY . .
 RUN npm run build
 
 # production stage
-FROM node:18.17-alpine3.17 as production-stage
+FROM node:18.0-alpine3.14 as production-stage
 
 RUN apk add --no-cache ffmpeg chromium
 
@@ -37,15 +31,8 @@ ENV NODE_ENV=production
 # 创建非 root 用户
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-# 安装指定版本的 npm
-RUN npm install -g npm@10.2.3
-
-# 验证 npm 版本
-RUN echo "NPM Version:" && npm -v
-
 COPY --from=build-stage --chown=appuser:appgroup /app/dist /app
 COPY --from=build-stage --chown=appuser:appgroup /app/package.json /app/package.json
-COPY --from=build-stage --chown=appuser:appgroup /app/package-lock.json /app/package-lock.json
 
 WORKDIR /app
 
