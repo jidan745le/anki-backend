@@ -416,6 +416,7 @@ export class AnkiService {
 
     const results = await this.manager.find(Deck, {
       where: { user: { id: userId } },
+      cache: false,
     });
 
     for (const deck of results) {
