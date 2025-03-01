@@ -813,7 +813,7 @@ export class AnkiService {
       );
 
       const response = await axios.post(
-        'http://8.222.155.238:5000/process_audio',
+        'http://audio-processor:5000/process_audio',
         formData,
         {
           headers: {
