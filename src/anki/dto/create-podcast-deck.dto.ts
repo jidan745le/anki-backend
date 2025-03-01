@@ -14,7 +14,7 @@ export class CreatePodcastDeckDto {
   description: string; // 描述
 
   @IsOptional()
-  podcastType?:PodcastType
+  podcastType?:PodcastType 
   
   @IsOptional()
   @IsString()

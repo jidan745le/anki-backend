@@ -1,38 +1,33 @@
 import {
+  Body,
   Controller,
   Get,
+  Param,
   Post,
-  Body,
   Query,
   Req,
-  UseGuards,
-  ValidationPipe,
-  UseInterceptors,
-  UploadedFile,
-  Param,
   Res,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+  ValidationPipe,
 } from '@nestjs/common';
-import { AnkiService } from './anki.service';
-import { LoginGuard } from '../login.guard';
-import { CreateAnkiDto } from './dto/create-anki.dto';
-import { UpdateAnkiDto } from './dto/update-anki.dto';
-import { CreateDeckDto } from './dto/create-deck.dto';
-import { ReviewQuality } from './entities/card.entity';
 import * as fs from 'fs';
 import * as path from 'path';
+import { LoginGuard } from '../login.guard';
+import { AnkiService } from './anki.service';
+import { CreateAnkiDto } from './dto/create-anki.dto';
+import { CreateDeckDto } from './dto/create-deck.dto';
 import { SplitAudioDto } from './dto/split-audio.dto';
+import { UpdateAnkiDto } from './dto/update-anki.dto';
+import { ReviewQuality } from './entities/card.entity';
 
-import {
-  AnyFilesInterceptor,
-  FileFieldsInterceptor,
-  FileInterceptor,
-  FilesInterceptor,
-} from '@nestjs/platform-express';
-import { CreatePodcastDeckDto } from './dto/create-podcast-deck.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { v4 as uuidv4 } from 'uuid';
-import { DeckStatus, DeckType } from './entities/deck.entity';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { CreatePodcastDeckDto } from './dto/create-podcast-deck.dto';
 import { DeckConfigDto } from './dto/deck-config.dto';
+import { DeckStatus, DeckType } from './entities/deck.entity';
 @UseGuards(LoginGuard)
 @Controller('anki')
 export class AnkiController {
@@ -215,6 +210,25 @@ export class AnkiController {
   ) {
     const userId: number = req?.user?.id;
     return await this.ankiService.createDeckWithAudioForOss(
+      file,
+      splitAudioDto,
+      userId,
+    );
+  }
+
+  @Post('createAdvancedDeckWithAudio')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      dest: 'uploads/temp',
+    }),
+  )
+  async createAdvancedDeckWithAudio(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() splitAudioDto: SplitAudioDto,
+    @Req() req,
+  ) {
+    const userId: number = req?.user?.id;
+    return await this.ankiService.createAdvancedDeckWithAudio(
       file,
       splitAudioDto,
       userId,

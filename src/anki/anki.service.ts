@@ -1,40 +1,41 @@
 import {
-  Injectable,
-  NotFoundException,
-  Inject,
-  Logger,
   ForbiddenException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectEntityManager, InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository, LessThan } from 'typeorm';
+import * as OSS from 'ali-oss';
+import axios from 'axios';
+import { execSync } from 'child_process';
+import * as ffmpeg from 'fluent-ffmpeg';
+import * as fs from 'fs';
+import * as path from 'path';
+import puppeteer from 'puppeteer';
+import { RedisClientType } from 'redis';
+import { User } from 'src/user/entities/user.entity';
+import { WebsocketGateway } from 'src/websocket/websocket.gateway';
+import { EntityManager, LessThan, Repository } from 'typeorm';
+import { v4 as uuidv4 } from 'uuid';
+import { CreateAnkiDto } from './dto/create-anki.dto';
+import { CreateDeckDto } from './dto/create-deck.dto';
+import {
+  CreatePodcastDeckDto,
+  PodcastType,
+} from './dto/create-podcast-deck.dto';
+import { DeckConfigDto } from './dto/deck-config.dto';
+import { SplitAudioDto } from './dto/split-audio.dto';
+import { UpdateAnkiDto } from './dto/update-anki.dto';
 import {
   Card,
   CardType,
   ContentType,
   ReviewQuality,
 } from './entities/card.entity';
-import { Deck, DeckStatus } from './entities/deck.entity';
-import { UpdateAnkiDto } from './dto/update-anki.dto';
-import { CreateAnkiDto } from './dto/create-anki.dto';
-import { CreateDeckDto } from './dto/create-deck.dto';
-import * as fs from 'fs';
-import * as path from 'path';
-import { User } from 'src/user/entities/user.entity';
-import { RedisClientType } from 'redis';
-import { v4 as uuidv4 } from 'uuid';
-import * as OSS from 'ali-oss';
-import { SplitAudioDto } from './dto/split-audio.dto';
-import * as ffmpeg from 'fluent-ffmpeg';
-import { ConfigService } from '@nestjs/config';
-import { execSync } from 'child_process';
-import { CreatePodcastDeckDto } from './dto/create-podcast-deck.dto';
-import puppeteer from 'puppeteer';
-import axios from 'axios';
-import { PodcastType } from './dto/create-podcast-deck.dto';
-import { DeckType } from './entities/deck.entity';
-import { WebsocketGateway } from 'src/websocket/websocket.gateway';
 import { DeckSettings } from './entities/deck-settings.entity';
-import { DeckConfigDto } from './dto/deck-config.dto';
+import { Deck, DeckStatus, DeckType } from './entities/deck.entity';
 
 @Injectable()
 export class AnkiService {
@@ -782,6 +783,98 @@ export class AnkiService {
         -1,
         `Error: ${error.message}`,
       );
+      throw error;
+    }
+  }
+
+  async createAdvancedDeckWithAudio(
+    file: Express.Multer.File,
+    dto: SplitAudioDto,
+    userId: number,
+  ): Promise<{ deck: Partial<Deck> & { stats: any }; cards: Card[] }> {
+    let newDeck: Deck;
+    try {
+      newDeck = await this.addDeck(
+        {
+          name: dto.name,
+          description: dto.description,
+          deckType: DeckType.AUDIO,
+          status: DeckStatus.PROCESSING, // 设置为 processing 状态
+        },
+        userId,
+      );
+
+      // 1. 调用 Python 服务获取 transcript
+      const formData = new FormData();
+      formData.append(
+        'file',
+        new Blob([fs.readFileSync(file.path)]),
+        file.originalname,
+      );
+
+      const response = await axios.post(
+        'http://8.222.155.238:5000/process_audio',
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        },
+      );
+
+      const segments = response.data;
+      console.log(segments, 'segments');
+
+      // 3. 处理每个片段
+      const cards: Card[] = [];
+
+      // 上传到 OSS
+
+      const ossPrefix = `decks/${newDeck.id}/audio`;
+
+      const totalSegments = segments.length;
+      for (let i = 0; i < totalSegments; i++) {
+        const segment = segments[i];
+        const nextSegment = segments[i + 1];
+
+        const ossFileName = `${uuidv4()}.mp3`;
+        const ossPath = `${ossPrefix}/${ossFileName}`;
+        const startTime = segment.start;
+        const duration = nextSegment
+          ? nextSegment.start - startTime
+          : undefined;
+
+        const audioUrl = await this.cutAndUploadAudioForOss(
+          file.path,
+          ossPath,
+          startTime,
+          duration,
+        );
+
+        const card = await this.createCard({
+          deckId: newDeck.id,
+          front: audioUrl,
+          back: `${segment.speaker}: ${segment.text}`,
+          originalName: ossFileName,
+          contentType: ContentType.AUDIO,
+        });
+        cards.push(card);
+      }
+      const stats = await this.calculateStats(newDeck.id);
+      fs.unlinkSync(file.path); // 删除临时文件
+      await this.redisClient.set(
+        this.getStatsCacheKey(newDeck.id),
+        JSON.stringify(stats),
+        { EX: 300 },
+      );
+
+      // 更新状态为完成
+      await this.deckRepository.update(newDeck.id, {
+        status: DeckStatus.COMPLETED,
+      });
+
+      return { deck: { ...newDeck, stats }, cards };
+    } catch (error) {
       throw error;
     }
   }

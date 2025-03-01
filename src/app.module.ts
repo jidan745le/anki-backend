@@ -26,7 +26,6 @@ import { ChatMessage } from './aichat/entities/chat-message.entity';
   imports: [
     UserModule,
     AnkiModule,
-    WebsocketModule,
     ConfigModule.forRoot({
       envFilePath: path.join(__dirname, '.env'),
       isGlobal: true,
