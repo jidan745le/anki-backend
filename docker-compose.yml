@@ -39,6 +39,16 @@ services:
       - /home/ji/redis-data:/data
     networks:
       - common-network
+  audio-processor:
+    image: split-audio-audio-processor:first
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./uploads:/app/uploads
+    depends_on:
+      - redis-container
+    networks:
+      - common-network
 networks:
   common-network:
     driver: bridge
