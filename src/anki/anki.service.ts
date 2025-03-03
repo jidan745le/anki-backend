@@ -15,6 +15,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import puppeteer from 'puppeteer';
 import { RedisClientType } from 'redis';
+import { EmbeddingService } from 'src/embedding/embedding.service';
 import { User } from 'src/user/entities/user.entity';
 import { WebsocketGateway } from 'src/websocket/websocket.gateway';
 import { EntityManager, LessThan, Repository } from 'typeorm';
@@ -42,6 +43,7 @@ export class AnkiService {
   constructor(
     private configService: ConfigService,
     private readonly websocketGateway: WebsocketGateway,
+    private readonly embeddingService: EmbeddingService,
   ) {
     // 获取 ffmpeg 路径
     try {
@@ -813,7 +815,7 @@ export class AnkiService {
       );
 
       const response = await axios.post(
-        'http://audio-processor:5000/process_audio',
+        'http://8.222.155.238:5000/process_audio',
         formData,
         {
           headers: {
@@ -824,6 +826,9 @@ export class AnkiService {
 
       const segments = response.data;
       console.log(segments, 'segments');
+
+      // 构建向量存储
+      await this.embeddingService.buildVectorStore(segments, newDeck.id);
 
       // 3. 处理每个片段
       const cards: Card[] = [];
@@ -1113,5 +1118,27 @@ export class AnkiService {
     }
 
     return settings;
+  }
+
+  // 添加相似内容搜索方法
+  async findSimilarCards(deckId: number, query: string) {
+    const similarContent = await this.embeddingService.searchSimilarContent(
+      deckId,
+      query,
+    );
+
+    // 将搜索结果转换为卡片
+    const cards = await Promise.all(
+      similarContent.map(async (content) => {
+        return await this.cardRepository.findOne({
+          where: {
+            deck: { id: deckId },
+            back: content.pageContent,
+          },
+        });
+      }),
+    );
+
+    return cards.filter((card) => card !== null);
   }
 }
