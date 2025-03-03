@@ -1,7 +1,6 @@
-import { HuggingFaceTransformers } from '@langchain/community/embeddings/hf_transformers';
+import { HuggingFaceTransformersEmbeddings } from '@langchain/community/embeddings/huggingface_transformers';
 import { Chroma } from '@langchain/community/vectorstores/chroma';
 import { Injectable, Logger } from '@nestjs/common';
-import * as fs from 'fs/promises';
 import { Document } from 'langchain/document';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 
@@ -37,34 +36,28 @@ export class EmbeddingService {
         pageContent: doc.pageContent,
         metadata: doc.metadata,
       }));
+      console.log(serializableDocs, 'serializableDocs');
 
-      await fs.writeFile(
-        `embeddings/deck_${deckId}.json`,
-        JSON.stringify(serializableDocs, null, 2),
-        'utf-8',
-      );
+      // await fs.writeFile(
+      //   `embeddings/deck_${deckId}.json`,
+      //   JSON.stringify(serializableDocs, null, 2),
+      //   'utf-8',
+      // );
 
       // 初始化 embeddings
-      const embeddings = new HuggingFaceTransformers({
-        modelName: 'nomic-ai/nomic-embed-text-v1',
-        modelKwargs: {
-          trustRemoteCode: true,
-          device: 'cuda',
-        },
-        encodeKwargs: {
-          normalizeEmbeddings: true,
-        },
+      const embeddings = new HuggingFaceTransformersEmbeddings({
+        model: 'nomic-ai/nomic-embed-text-v1',
       });
 
       // 创建向量存储
-      const persistDirectory = `chroma_db/deck_${deckId}`;
+      // const persistDirectory = `chroma_db/deck_${deckId}`;
       const vectorStore = await Chroma.fromDocuments(splitDocs, embeddings, {
         collectionName: `deck_${deckId}_vectors`,
-        persistDirectory,
+        url: 'http://127.0.0.1:8000',
       });
 
       // 持久化存储
-      await vectorStore.persist();
+      // await vectorStore.persist();
 
       return vectorStore;
     } catch (error) {
@@ -81,24 +74,14 @@ export class EmbeddingService {
   // 添加相似内容搜索方法
   async searchSimilarContent(deckId: number, query: string) {
     try {
-      const embeddings = new HuggingFaceTransformers({
-        modelName: 'nomic-ai/nomic-embed-text-v1',
-        modelKwargs: {
-          trustRemoteCode: true,
-          device: 'cuda',
-        },
-        encodeKwargs: {
-          normalizeEmbeddings: true,
-        },
+      const embeddings = new HuggingFaceTransformersEmbeddings({
+        model: 'nomic-ai/nomic-embed-text-v1',
       });
 
-      const vectorStore = await Chroma.load(
-        `deck_${deckId}_vectors`,
-        embeddings,
-        {
-          persistDirectory: `chroma_db/deck_${deckId}`,
-        },
-      );
+      const vectorStore = await Chroma.fromExistingCollection(embeddings, {
+        collectionName: `deck_${deckId}_vectors`,
+        url: 'http://127.0.0.1:8000',
+      });
 
       const results = await vectorStore.similaritySearch(query, 5);
       return results;
