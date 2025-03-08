@@ -1,4 +1,4 @@
-FROM node:18.0-slim as build-stage
+FROM node:18.17-slim as build-stage
 
 WORKDIR /app
 
@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     chromium \
     ffmpeg \
     wget \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install
@@ -17,11 +18,12 @@ COPY . .
 RUN npm run build
 
 # production stage
-FROM node:18.0-slim as production-stage
+FROM node:18.17-slim as production-stage
 
 RUN apt-get update && apt-get install -y \
     chromium \
     ffmpeg \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
