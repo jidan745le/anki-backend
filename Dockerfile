@@ -1,4 +1,4 @@
-FROM node:18.0-alpine3.14 as build-stage
+FROM node:18.0-slim as build-stage
 
 WORKDIR /app
 
@@ -21,7 +21,7 @@ COPY . .
 RUN npm run build
 
 # production stage
-FROM node:18.0-alpine3.14 as production-stage
+FROM node:18.0-slim as production-stage
 
 RUN apk add --no-cache ffmpeg chromium
 
