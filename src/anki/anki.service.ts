@@ -815,7 +815,7 @@ export class AnkiService {
       );
 
       const response = await axios.post(
-        'http://8.222.155.238:5000/process_audio',
+        'http://audio-processor:5000/process_audio',
         formData,
         {
           headers: {
@@ -1122,20 +1122,31 @@ export class AnkiService {
 
   // 添加相似内容搜索方法
   async findSimilarCards(deckId: number, query: string) {
-    const similarContent = await this.embeddingService.searchSimilarContent(
-      deckId,
-      query,
-    );
+    const similarContentWithScores =
+      await this.embeddingService.searchSimilarContent(deckId, query);
 
     // 将搜索结果转换为卡片
     const cards = await Promise.all(
-      similarContent.map(async (content) => {
-        return await this.cardRepository.findOne({
+      similarContentWithScores.map(async (result) => {
+        // 解构 [Document, score] 数组
+        const [content, score] = result;
+
+        const card = await this.cardRepository.findOne({
           where: {
             deck: { id: deckId },
             back: content.pageContent,
           },
         });
+
+        // 如果找到卡片，添加相似度分数
+        if (card) {
+          return {
+            ...card,
+            similarity: score,
+          };
+        }
+
+        return null;
       }),
     );
 

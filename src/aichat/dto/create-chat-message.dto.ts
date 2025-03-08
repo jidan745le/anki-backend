@@ -1,12 +1,16 @@
 import {
   IsEnum,
   IsNotEmpty,
-  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
 } from 'class-validator';
-import { MessageRole, AIModel } from '../entities/chat-message.entity';
+import { AIModel } from '../entities/chat-message.entity';
+
+export enum ContextMode {
+  Local = 'local',
+  Global = 'global',
+}
 
 export class CreateChatMessageDto {
   @IsOptional()
@@ -21,6 +25,11 @@ export class CreateChatMessageDto {
   @IsString()
   content: string;
 
+  @IsOptional()
   @IsEnum(AIModel)
-  model: AIModel = AIModel.GPT35;
+  model: AIModel = AIModel.DS_CHAT;
+
+  @IsOptional()
+  @IsEnum(ContextMode)
+  mode: ContextMode = ContextMode.Local;
 }

@@ -1,20 +1,14 @@
 import {
+  Body,
   Controller,
   Get,
-  Post,
-  Body,
-  Patch,
   Param,
-  Delete,
-  Query,
+  Post,
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
-import { AichatService } from './aichat.service';
-import { CreateAichatDto } from './dto/create-aichat.dto';
-import { UpdateAichatDto } from './dto/update-aichat.dto';
 import { LoginGuard } from '../login.guard';
-import { GetChatMessagesDto } from './dto/get-chat-messages.dto';
+import { AichatService } from './aichat.service';
 import { CreateChatMessageDto } from './dto/create-chat-message.dto';
 
 @UseGuards(LoginGuard)
@@ -29,7 +23,8 @@ export class AichatController {
 
   @Post('message')
   async createMessage(
-    @Body(ValidationPipe) createMessageDto: CreateChatMessageDto,
+    @Body(new ValidationPipe({ transform: true }))
+    createMessageDto: CreateChatMessageDto,
   ) {
     return this.aichatService.createMessage(createMessageDto);
   }

@@ -1,20 +1,18 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-  Logger,
-} from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
-import { Chat, ChatStatus } from './entities/chat.entity';
-import { ChatMessage, MessageRole } from './entities/chat-message.entity';
-import { GetChatMessagesDto } from './dto/get-chat-messages.dto';
-import { CreateChatMessageDto } from './dto/create-chat-message.dto';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
 import OpenAI from 'openai';
-import { Card } from 'src/anki/entities/card.entity';
 import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
-
+import { Card } from 'src/anki/entities/card.entity';
+import { EmbeddingService } from 'src/embedding/embedding.service';
+import { DataSource, Repository } from 'typeorm';
+import {
+  ContextMode,
+  CreateChatMessageDto,
+} from './dto/create-chat-message.dto';
+import { ChatMessage, MessageRole } from './entities/chat-message.entity';
+import { Chat, ChatStatus } from './entities/chat.entity';
+import { getRetrievalUserPrompt, getSystemPrompt } from './utils/aichat.util';
 @Injectable()
 export class AichatService {
   private openai: OpenAI;
@@ -29,9 +27,11 @@ export class AichatService {
     private cardRepository: Repository<Card>,
     private configService: ConfigService,
     private dataSource: DataSource,
+    private embeddingService: EmbeddingService,
   ) {
     this.openai = new OpenAI({
       apiKey: this.configService.get('OPENAI_API_KEY'),
+      baseURL: 'https://api.deepseek.com',
     });
   }
 
@@ -67,6 +67,7 @@ export class AichatService {
         this.logger.debug(`Creating new chat for card ID: ${dto.cardId}`);
         const card = await queryRunner.manager.findOne(Card, {
           where: { uuid: dto.cardId },
+          relations: ['deck'],
         });
 
         if (!card) {
@@ -76,18 +77,14 @@ export class AichatService {
 
         chat = await queryRunner.manager.findOne(Chat, {
           where: { card: { id: card.id } },
+          relations: ['card', 'card.deck'],
         });
         if (!chat) {
+          //first time to init a chat row for a card
           chat = queryRunner.manager.create(Chat, {
             card,
             name: `Chat for Card ${card.id}`,
             status: ChatStatus.ACTIVE,
-            context: `You are a text explanation assistant. You will receive two information:
-            1. **html content: html content of the text**
-            2. **selection: Selection information**
-            **Based on this information:**
-            Briefly explain the selected word, entity, or phrase, using both context from the surrounding text manifested by html content and any knowledge you can find, if necessary.
-            Focus on the selection itself, not the entire context.Use clear, concise language. Assume an intelligent reader who's unfamiliar with the topic.Break down any complex terms or concepts and explain the meaning in an easy to understand way. Avoid jargon and please use english to respond`,
           });
           await queryRunner.manager.save(chat);
         }
@@ -95,28 +92,56 @@ export class AichatService {
       } else if (dto.chatId) {
         chat = await queryRunner.manager.findOne(Chat, {
           where: { uuid: dto.chatId },
+          relations: ['card', 'card.deck'],
         });
       }
 
       this.logger.debug(`Saving user message for chat ID: ${chat.id}`);
+      let globalContext: string;
+      if (dto.mode === ContextMode.Global) {
+        console.log('chat.card.deck.id', chat);
+        const similarContentWithScores =
+          await this.embeddingService.searchSimilarContent(
+            chat.card.deck.id,
+            dto.content,
+          );
+        globalContext = similarContentWithScores
+          .map((result) => result[0].pageContent)
+          .join('\n');
+        console.log('globalContext', globalContext);
+      }
+
       const userMessage = queryRunner.manager.create(ChatMessage, {
         chat,
-        content: dto.content,
+        content:
+          dto.mode === ContextMode.Global
+            ? getRetrievalUserPrompt(globalContext, dto.content)
+            : dto.content,
         role: MessageRole.USER,
         model: dto.model,
       });
       await queryRunner.manager.save(userMessage);
 
       this.logger.debug(`Fetching message history for chat ID: ${chat.id}`);
-      const history = await queryRunner.manager.find(ChatMessage, {
-        where: { chat: { id: chat.id } },
-        order: { createdAt: 'DESC' },
-        take: 10,
-      });
-      const messages = [
+      let history: ChatMessage[];
+      if (dto.mode === ContextMode.Local) {
+        //如果是基于单个卡片的对话，则需要获取最近5条消息，并且只需要获得单张卡片上下文
+        history = await queryRunner.manager.find(ChatMessage, {
+          where: { chat: { id: chat.id } },
+          order: { createdAt: 'DESC' },
+          take: 5,
+        });
+      } else if (dto.mode === ContextMode.Global) {
+        history = await queryRunner.manager.find(ChatMessage, {
+          where: { chat: { id: chat.id } },
+          order: { createdAt: 'DESC' },
+          take: 1,
+        });
+      }
+      const messages: ChatCompletionMessageParam[] = [
         {
           role: 'system',
-          content: chat.context || 'You are a helpful assistant.',
+          content: getSystemPrompt(dto.mode),
         },
         ...history.reverse().map((msg) => ({
           role: msg.role,
@@ -128,7 +153,7 @@ export class AichatService {
       this.logger.debug(`Calling OpenAI API with model: ${dto.model}`);
       const completion = await this.openai.chat.completions.create({
         model: dto.model,
-        max_tokens: 400,
+        // max_tokens: 400,
         temperature: 0.7,
         messages: messages as ChatCompletionMessageParam[],
       });

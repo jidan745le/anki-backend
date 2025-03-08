@@ -1,16 +1,16 @@
 import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  ManyToOne,
-  JoinColumn,
-  CreateDateColumn,
-  UpdateDateColumn,
   BeforeInsert,
+  Column,
+  CreateDateColumn,
+  Entity,
   Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
-import { Chat } from './chat.entity';
 import { v4 as uuidv4 } from 'uuid';
+import { Chat } from './chat.entity';
 
 export enum MessageRole {
   SYSTEM = 'system',
@@ -22,6 +22,8 @@ export enum AIModel {
   GPT35 = 'gpt-3.5-turbo',
   GPT4 = 'gpt-4',
   CLAUDE = 'claude-3-sonnet',
+  DS_CHAT = 'deepseek-chat',
+  DS_REASONING = 'deepseek-reasoner',
 }
 
 @Entity('chat_messages')

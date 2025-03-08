@@ -20,6 +20,7 @@ services:
     depends_on:
       - mysql-container
       - redis-container
+      - vector-database
     # ports:
     #   - 3005:3000
     networks:
@@ -47,6 +48,12 @@ services:
       - ./uploads:/app/uploads
     depends_on:
       - redis-container
+    networks:
+      - common-network
+  vector-database:
+    image: chromadb/chroma
+    ports:
+      - 8000:8000
     networks:
       - common-network
 networks:

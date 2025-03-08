@@ -53,7 +53,7 @@ export class EmbeddingService {
       // const persistDirectory = `chroma_db/deck_${deckId}`;
       const vectorStore = await Chroma.fromDocuments(splitDocs, embeddings, {
         collectionName: `deck_${deckId}_vectors`,
-        url: 'http://127.0.0.1:8000',
+        url: 'http://vector-database:8000',
       });
 
       // 持久化存储
@@ -80,10 +80,10 @@ export class EmbeddingService {
 
       const vectorStore = await Chroma.fromExistingCollection(embeddings, {
         collectionName: `deck_${deckId}_vectors`,
-        url: 'http://127.0.0.1:8000',
+        url: 'http://vector-database:8000',
       });
 
-      const results = await vectorStore.similaritySearch(query, 5);
+      const results = await vectorStore.similaritySearchWithScore(query, 5);
       return results;
     } catch (error) {
       this.logger.error(`Error searching similar content: ${error.message}`);
