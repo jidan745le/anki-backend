@@ -4,15 +4,11 @@ WORKDIR /app
 
 COPY package.json .
 
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y \
     chromium \
-    nss \
-    freetype \
-    freetype-dev \
-    harfbuzz \
-    ca-certificates \
-    ttf-freefont \
-    ffmpeg
+    ffmpeg \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN npm install
 
@@ -23,16 +19,20 @@ RUN npm run build
 # production stage
 FROM node:18.0-slim as production-stage
 
-RUN apk add --no-cache ffmpeg chromium
+RUN apt-get update && apt-get install -y \
+    chromium \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV NODE_ENV=production
 
-# 创建非 root 用户
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+# 创建非 root 用户 (Debian 风格)
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
 COPY --from=build-stage --chown=appuser:appgroup /app/dist /app
 COPY --from=build-stage --chown=appuser:appgroup /app/package.json /app/package.json
+COPY --from=build-stage --chown=appuser:appgroup /app/src/.env /app/.env
 
 WORKDIR /app
 
@@ -40,8 +40,6 @@ USER appuser
 
 RUN npm install --production
 
-# 切换到非 root 用户
-
 EXPOSE 3000
 
-CMD ["node", "/app/main.js"]
+CMD ["node", "main.js"]
