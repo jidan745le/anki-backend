@@ -100,14 +100,24 @@ export class AichatService {
       let globalContext: string;
       if (dto.mode === ContextMode.Global) {
         console.log('chat.card.deck.id', chat);
-        const similarContentWithScores =
-          await this.embeddingService.searchSimilarContent(
-            chat.card.deck.id,
-            dto.content,
-          );
-        globalContext = similarContentWithScores
-          .map((result) => result[0].pageContent)
-          .join('\n');
+        const keywords = await this.embeddingService.generateSearchKeywords(
+          dto.content,
+        );
+        console.log('keywords', keywords);
+        const globalContextSet = new Set<string>();
+        for (const keyword of keywords) {
+          const similarContentWithScores =
+            await this.embeddingService.searchSimilarContent(
+              chat.card.deck.id,
+              keyword,
+            );
+          similarContentWithScores.forEach((result) => {
+            globalContextSet.add(
+              `${result[0].pageContent}(${result[0].metadata.start}-${result[0].metadata.end})`,
+            );
+          });
+        }
+        globalContext = Array.from(globalContextSet).join('\n');
         console.log('globalContext', globalContext);
       }
 
