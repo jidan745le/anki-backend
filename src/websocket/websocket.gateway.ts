@@ -1,15 +1,14 @@
+import { Inject, Logger, UnauthorizedException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import {
-  WebSocketGateway,
-  WebSocketServer,
+  ConnectedSocket,
+  MessageBody,
   OnGatewayConnection,
   SubscribeMessage,
-  MessageBody,
-  ConnectedSocket,
+  WebSocketGateway,
+  WebSocketServer,
 } from '@nestjs/websockets';
-import { Server } from 'socket.io';
-import { Socket } from 'socket.io';
-import { JwtService } from '@nestjs/jwt';
-import { Inject, Logger, UnauthorizedException } from '@nestjs/common';
+import { Server, Socket } from 'socket.io';
 
 @WebSocketGateway({
   cors: {
@@ -80,9 +79,10 @@ export class WebsocketGateway implements OnGatewayConnection {
     progress: number,
     status: string,
   ) {
+    console.log('sendProgress', userId, taskId, progress, status);
     this.server.to(`user-${userId}`).emit(`task-${taskId}-pending`, {
-      progress,
-      message: status,
+      progress: progress || 0,
+      message: status || '',
       taskId,
     });
   }

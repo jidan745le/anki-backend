@@ -228,11 +228,26 @@ export class AnkiController {
     @Req() req,
   ) {
     const userId: number = req?.user?.id;
-    return await this.ankiService.createAdvancedDeckWithAudio(
-      file,
-      splitAudioDto,
+    const taskId = uuidv4();
+    const newDeck = await this.ankiService.addDeck(
+      {
+        name: splitAudioDto.name,
+        taskId,
+        description: splitAudioDto.description,
+        deckType: DeckType.AUDIO,
+        status: DeckStatus.PROCESSING,
+      },
       userId,
     );
+    setTimeout(() => {
+      this.websocketGateway.sendTaskInit(userId, taskId);
+    }, 1000);
+    this.ankiService.beginAdvancedDeckWithAudioCreationTask(file, newDeck);
+    return {
+      taskId: taskId,
+      deckId: newDeck.id,
+      message: 'Processing started',
+    };
   }
 
   @Post('createDeckWithPodcast')

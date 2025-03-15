@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnApplicationBootstrap,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectEntityManager, InjectRepository } from '@nestjs/typeorm';
@@ -18,6 +19,8 @@ import { RedisClientType } from 'redis';
 import { EmbeddingService } from 'src/embedding/embedding.service';
 import { User } from 'src/user/entities/user.entity';
 import { WebsocketGateway } from 'src/websocket/websocket.gateway';
+import { WebSocketService } from 'src/websocket/websocket.socket';
+
 import { EntityManager, LessThan, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { CreateAnkiDto } from './dto/create-anki.dto';
@@ -39,12 +42,14 @@ import { DeckSettings } from './entities/deck-settings.entity';
 import { Deck, DeckStatus, DeckType } from './entities/deck.entity';
 
 @Injectable()
-export class AnkiService {
+export class AnkiService implements OnApplicationBootstrap {
   constructor(
     private configService: ConfigService,
     private readonly websocketGateway: WebsocketGateway,
     private readonly embeddingService: EmbeddingService,
+    private readonly websocketService: WebSocketService,
   ) {
+    console.log('AnkiService constructor');
     // 获取 ffmpeg 路径
     try {
       // console.log(execSync(process.platform === 'win32' ? 'where ffmpeg' : 'which ffmpeg').toString(),"dddd")
@@ -82,6 +87,71 @@ export class AnkiService {
   private static ossClient: any;
 
   private readonly logger = new Logger(AnkiService.name);
+
+  async onApplicationBootstrap() {
+    console.log('AnkiService onApplicationBootstrap');
+    const progressNodes = {
+      whisper: 20,
+      segmentation: 20,
+      embeddings: 20,
+    };
+    this.websocketService.on('connection', () => {
+      console.log('WebSocket connected');
+    });
+
+    this.websocketService.on('disconnect', () => {
+      console.log('WebSocket disconnected');
+    });
+
+    this.websocketService.on('whisper_progress', (data) => {
+      console.log(`Whisper progress: ${data.progress}% - ${data.message}`);
+      // 可以通过 websocketGateway 转发给前端
+      this.websocketGateway.sendProgress(
+        data.user_id,
+        data.task_id,
+        Number((progressNodes.whisper * (data.progress / 100)).toFixed(2)),
+        data.message,
+      );
+    });
+
+    this.websocketService.on('diarization_progress', (data) => {
+      console.log(`Diarization: ${data.message}`);
+      console.log(data.progress, 'data.progress');
+      // 可以通过 websocketGateway 转发给前端
+      if (data.progress) {
+        this.websocketGateway.sendProgress(
+          data.user_id,
+          data.task_id,
+          data.step === 'segmentation'
+            ? Number(
+                (
+                  progressNodes.whisper +
+                  progressNodes.segmentation * (data.progress / 100)
+                ).toFixed(2),
+              )
+            : Number(
+                (
+                  progressNodes.whisper +
+                  progressNodes.segmentation +
+                  progressNodes.embeddings * (data.progress / 100)
+                ).toFixed(2),
+              ),
+          data.message,
+        );
+      }
+    });
+
+    // this.websocketService.on('processing_status', (data) => {
+    //   console.log(`Processing status: ${data.status} - ${data.message}`);
+    //   // 可以通过 websocketGateway 转发给前端
+    //   this.websocketGateway.sendProgress(
+    //     data.user_id,
+    //     data.task_id,
+    //     data.progress,
+    //     data.message,
+    //   );
+    // });
+  }
 
   async getHello() {
     const value = await this.redisClient.keys('*');
@@ -789,23 +859,11 @@ export class AnkiService {
     }
   }
 
-  async createAdvancedDeckWithAudio(
+  async beginAdvancedDeckWithAudioCreationTask(
     file: Express.Multer.File,
-    dto: SplitAudioDto,
-    userId: number,
+    newDeck: Deck,
   ): Promise<{ deck: Partial<Deck> & { stats: any }; cards: Card[] }> {
-    let newDeck: Deck;
     try {
-      newDeck = await this.addDeck(
-        {
-          name: dto.name,
-          description: dto.description,
-          deckType: DeckType.AUDIO,
-          status: DeckStatus.PROCESSING, // 设置为 processing 状态
-        },
-        userId,
-      );
-
       // 1. 调用 Python 服务获取 transcript
       const formData = new FormData();
       formData.append(
@@ -814,22 +872,36 @@ export class AnkiService {
         file.originalname,
       );
 
-      const response = await axios.post(
-        'http://audio-processor:5000/process_audio',
-        formData,
-        {
+      formData.append('taskId', newDeck.taskId);
+      formData.append('userId', newDeck.user.id.toString());
+
+      const response = await axios
+        .post('http://audio-processor:8080/process_audio', formData, {
           headers: {
             'Content-Type': 'multipart/form-data',
           },
-        },
-      );
+        })
+        .catch((err) => {
+          console.log(err, 'err');
+          throw new Error('Failed to process audio');
+        });
 
       const segments = response.data;
       console.log(segments, 'segments');
-
+      this.websocketGateway.sendProgress(
+        newDeck.user.id,
+        newDeck.taskId,
+        68,
+        'building vector store',
+      );
       // 构建向量存储
       await this.embeddingService.buildVectorStore(segments, newDeck.id);
-
+      this.websocketGateway.sendProgress(
+        newDeck.user.id,
+        newDeck.taskId,
+        70,
+        'finished vector store',
+      );
       // 3. 处理每个片段
       const cards: Card[] = [];
 
@@ -849,6 +921,12 @@ export class AnkiService {
           ? nextSegment.start - startTime
           : undefined;
 
+        this.websocketGateway.sendProgress(
+          newDeck.user.id,
+          newDeck.taskId,
+          70 + Math.floor((i / totalSegments) * 20),
+          `Processing segment ${i + 1} of ${totalSegments}`,
+        );
         const audioUrl = await this.cutAndUploadAudioForOss(
           file.path,
           ossPath,
@@ -863,6 +941,7 @@ export class AnkiService {
           originalName: ossFileName,
           contentType: ContentType.AUDIO,
         });
+
         cards.push(card);
       }
       const stats = await this.calculateStats(newDeck.id);
@@ -877,6 +956,12 @@ export class AnkiService {
       await this.deckRepository.update(newDeck.id, {
         status: DeckStatus.COMPLETED,
       });
+      this.websocketGateway.sendProgress(
+        newDeck.user.id,
+        newDeck.taskId,
+        100,
+        'Processing complete',
+      );
 
       return { deck: { ...newDeck, stats }, cards };
     } catch (error) {

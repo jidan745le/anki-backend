@@ -1,16 +1,16 @@
-import { LoginDto } from './dto/login.dto';
-import { RegisterDto } from './dto/register.dto';
 import {
   BadRequestException,
   HttpException,
-  HttpStatus,
   Injectable,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { User } from './entities/user.entity';
 import * as crypto from 'crypto';
+import { Repository } from 'typeorm';
+import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
+import { User } from './entities/user.entity';
 
 function md5(str) {
   const hash = crypto.createHash('md5');
@@ -19,11 +19,15 @@ function md5(str) {
 }
 
 @Injectable()
-export class UserService {
+export class UserService implements OnModuleInit {
   private logger = new Logger();
 
   @InjectRepository(User)
   private userRepository: Repository<User>;
+
+  async onModuleInit() {
+    console.log('UserService onModuleInit');
+  }
 
   async login(user: LoginDto) {
     const foundUser = await this.userRepository.findOneBy({
