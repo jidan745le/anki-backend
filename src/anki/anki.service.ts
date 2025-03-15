@@ -141,16 +141,16 @@ export class AnkiService implements OnApplicationBootstrap {
       }
     });
 
-    // this.websocketService.on('processing_status', (data) => {
-    //   console.log(`Processing status: ${data.status} - ${data.message}`);
-    //   // 可以通过 websocketGateway 转发给前端
-    //   this.websocketGateway.sendProgress(
-    //     data.user_id,
-    //     data.task_id,
-    //     data.progress,
-    //     data.message,
-    //   );
-    // });
+    this.websocketService.on('processing_status', (data) => {
+      console.log(`Processing status: ${data.status} - ${data.message}`);
+      // 可以通过 websocketGateway 转发给前端
+      this.websocketGateway.sendProgress(
+        data.user_id,
+        data.task_id,
+        data.progress,
+        data.message,
+      );
+    });
   }
 
   async getHello() {
