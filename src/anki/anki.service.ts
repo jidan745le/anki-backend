@@ -91,7 +91,7 @@ export class AnkiService implements OnApplicationBootstrap {
   async onApplicationBootstrap() {
     console.log('AnkiService onApplicationBootstrap');
     const progressNodes = {
-      whisper: 20,
+      whisper: 10,
       segmentation: 20,
       embeddings: 20,
     };
@@ -109,7 +109,7 @@ export class AnkiService implements OnApplicationBootstrap {
       this.websocketGateway.sendProgress(
         data.user_id,
         data.task_id,
-        Number((progressNodes.whisper * (data.progress / 100)).toFixed(2)),
+        Number((10 + progressNodes.whisper * (data.progress / 100)).toFixed(2)),
         data.message,
       );
     });
