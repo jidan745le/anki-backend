@@ -1,3 +1,4 @@
+import { Card } from 'src/anki/entities/card.entity';
 import {
   BeforeInsert,
   Column,
@@ -10,7 +11,6 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
-import { Chat } from './chat.entity';
 
 export enum MessageRole {
   SYSTEM = 'system',
@@ -57,6 +57,9 @@ export class ChatMessage {
   @Column('text')
   content: string;
 
+  @Column('text', { nullable: true })
+  chunkId: string;
+
   @Column('int', { nullable: true })
   promptTokens: number;
 
@@ -66,11 +69,11 @@ export class ChatMessage {
   @Column('int', { nullable: true })
   totalTokens: number;
 
-  @ManyToOne(() => Chat, (chat) => chat.messages, {
+  @ManyToOne(() => Card, (card) => card.messages, {
     onDelete: 'CASCADE',
   })
-  @JoinColumn({ name: 'chat_id' })
-  chat: Chat;
+  @JoinColumn({ name: 'card_id' })
+  card: Card;
 
   @CreateDateColumn()
   createdAt: Date;

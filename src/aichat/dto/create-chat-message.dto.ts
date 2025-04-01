@@ -15,10 +15,6 @@ export enum ContextMode {
 export class CreateChatMessageDto {
   @IsOptional()
   @IsUUID()
-  chatId: string;
-
-  @IsOptional()
-  @IsUUID()
   cardId: string;
 
   @IsNotEmpty()
@@ -28,6 +24,11 @@ export class CreateChatMessageDto {
   @IsOptional()
   @IsEnum(AIModel)
   model: AIModel = AIModel.DS_CHAT;
+
+  //特指一个anki卡中选中的针对selection内容的问答聊天框
+  @IsOptional()
+  @IsString()
+  chunkId: string;
 
   @IsOptional()
   @IsEnum(ContextMode)

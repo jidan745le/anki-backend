@@ -1,17 +1,17 @@
+import { ChatMessage } from 'src/aichat/entities/chat-message.entity';
 import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  ManyToOne,
-  CreateDateColumn,
-  UpdateDateColumn,
-  JoinColumn,
   BeforeInsert,
-  OneToOne,
+  Column,
+  CreateDateColumn,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  OneToMany,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
-import { Deck } from './deck.entity';
 import { v4 as uuidv4 } from 'uuid';
-import { Chat } from '../../aichat/entities/chat.entity';
+import { Deck } from './deck.entity';
 
 export enum CardType {
   NEW = 'new',
@@ -106,8 +106,8 @@ export class Card {
   @UpdateDateColumn()
   updatedAt: Date;
 
-  @OneToOne(() => Chat, (chat) => chat.card)
-  chat: Chat;
+  @OneToMany(() => ChatMessage, (chatMessage) => chatMessage.card)
+  messages: ChatMessage[];
 
   @BeforeInsert()
   generateUuid() {

@@ -122,6 +122,8 @@ export class EmbeddingService {
         url: 'http://vector-database:8000',
       });
 
+      // vectorStore.collection.delete()
+
       const results = await vectorStore.similaritySearchWithScore(query, 5);
       return results;
     } catch (error) {
