@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
@@ -17,8 +18,11 @@ export class AichatController {
   constructor(private readonly aichatService: AichatService) {}
 
   @Get(':chatId/messages')
-  async getChatMessages(@Param('chatId') chatId: string) {
-    return this.aichatService.getChatMessages(chatId);
+  async getChatMessages(
+    @Param('chatId') chatId: string,
+    @Query('chunkId') chunkId: string,
+  ) {
+    return this.aichatService.getChatMessages(chatId, chunkId);
   }
 
   @Post('message')

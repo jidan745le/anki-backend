@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { Document } from 'langchain/document';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
-
+const isDevelopment = process.env.NODE_ENV === 'development';
 @Injectable()
 export class EmbeddingService {
   constructor(private configService: ConfigService) {}
@@ -15,15 +15,22 @@ export class EmbeddingService {
     try {
       // 构建文档
       const docs = segments.map((segment, index) => {
+        const metadata = {
+          start: this.formatTime(segment.start),
+          end: this.formatTime(segment.end),
+          sequence: index + 1,
+          speaker: segment.speaker,
+          deckId: deckId,
+          front: segment.front,
+        };
+
+        const filteredMetadata = Object.fromEntries(
+          Object.entries(metadata).filter(([_, value]) => !!value),
+        );
+
         return new Document({
           pageContent: segment.text.trim(),
-          metadata: {
-            start: this.formatTime(segment.start),
-            end: this.formatTime(segment.end),
-            sequence: index + 1,
-            speaker: segment.speaker,
-            deckId: deckId,
-          },
+          metadata: filteredMetadata,
         });
       });
 
@@ -56,7 +63,9 @@ export class EmbeddingService {
       // const persistDirectory = `chroma_db/deck_${deckId}`;
       const vectorStore = await Chroma.fromDocuments(splitDocs, embeddings, {
         collectionName: `deck_${deckId}_vectors`,
-        url: 'http://vector-database:8000',
+        url: !isDevelopment
+          ? 'http://vector-database:8000'
+          : 'http://127.0.0.1:8000',
       });
 
       // 持久化存储
@@ -69,7 +78,10 @@ export class EmbeddingService {
     }
   }
 
-  private formatTime(seconds: number): string {
+  private formatTime(seconds: number): string | null {
+    if (isNaN(seconds)) {
+      return null;
+    }
     const date = new Date(seconds * 1000);
     return date.toISOString().substr(11, 8);
   }

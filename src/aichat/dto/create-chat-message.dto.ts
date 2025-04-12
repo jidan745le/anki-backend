@@ -6,31 +6,46 @@ import {
   IsUUID,
 } from 'class-validator';
 import { AIModel } from '../entities/chat-message.entity';
-
-export enum ContextMode {
-  Local = 'local',
-  Global = 'global',
+export enum ChatContextType {
+  Card = 'Card',
+  Deck = 'Deck',
+  None = 'None',
 }
-
+export enum ChatType {
+  Explain = 'Explain',
+  Ask = 'Ask',
+  Generic = 'Generic',
+}
 export class CreateChatMessageDto {
-  @IsOptional()
   @IsUUID()
-  cardId: string;
+  @IsOptional()
+  cardId?: string;
 
+  @IsString()
+  @IsOptional()
+  chunkId?: string;
+
+  @IsEnum(ChatContextType)
   @IsNotEmpty()
-  @IsString()
-  content: string;
+  chatcontext: ChatContextType;
 
+  @IsString()
   @IsOptional()
+  contextContent?: string;
+
+  @IsEnum(ChatType)
+  @IsNotEmpty()
+  chattype: ChatType;
+
+  @IsString()
+  @IsOptional()
+  selectionText?: string;
+
+  @IsString()
+  @IsOptional()
+  question: string;
+
   @IsEnum(AIModel)
-  model: AIModel = AIModel.DS_CHAT;
-
-  //特指一个anki卡中选中的针对selection内容的问答聊天框
-  @IsOptional()
-  @IsString()
-  chunkId: string;
-
-  @IsOptional()
-  @IsEnum(ContextMode)
-  mode: ContextMode = ContextMode.Local;
+  @IsNotEmpty()
+  model?: AIModel = AIModel.DS_CHAT;
 }

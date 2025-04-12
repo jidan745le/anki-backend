@@ -11,6 +11,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
+import { ChatContextType, ChatType } from '../dto/create-chat-message.dto';
 
 export enum MessageRole {
   SYSTEM = 'system',
@@ -26,8 +27,16 @@ export enum AIModel {
   DS_REASONING = 'deepseek-reasoner',
 }
 
+export interface PromptConfig {
+  chatcontext: ChatContextType;
+  contextContent?: string;
+  chattype: ChatType;
+  selectionText?: string;
+  question?: string;
+}
+
 @Entity('chat_messages')
-@Index(['chat', 'createdAt'])
+@Index(['card', 'createdAt'])
 export class ChatMessage {
   @PrimaryGeneratedColumn()
   id: number;
@@ -59,6 +68,9 @@ export class ChatMessage {
 
   @Column('text', { nullable: true })
   chunkId: string;
+
+  @Column('json', { nullable: true })
+  prompt_config: PromptConfig;
 
   @Column('int', { nullable: true })
   promptTokens: number;

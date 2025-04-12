@@ -3,7 +3,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { OnGatewayConnection, OnGatewayDisconnect } from '@nestjs/websockets';
 import { EventEmitter } from 'events';
 import { Socket, io } from 'socket.io-client'; // 使用 socket.io-client
-
+const isDevelopment = process.env.NODE_ENV === 'development';
 @Injectable()
 export class WebSocketService
   implements OnModuleInit, OnGatewayConnection, OnGatewayDisconnect
@@ -23,13 +23,18 @@ export class WebSocketService
 
   private connect() {
     // 使用 Socket.IO 客户端
-    this.client = io('http://audio-processor:8080', {
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 10000,
-      timeout: 20000,
-    });
+    this.client = io(
+      isDevelopment
+        ? 'http://8.222.155.238:8080'
+        : 'http://audio-processor:8080',
+      {
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 10000,
+        timeout: 20000,
+      },
+    );
 
     this.setupEventHandlers();
   }

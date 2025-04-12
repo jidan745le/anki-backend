@@ -7,11 +7,16 @@ import { Card } from 'src/anki/entities/card.entity';
 import { EmbeddingService } from 'src/embedding/embedding.service';
 import { DataSource, Repository } from 'typeorm';
 import {
-  ContextMode,
+  ChatContextType,
   CreateChatMessageDto,
 } from './dto/create-chat-message.dto';
 import { ChatMessage, MessageRole } from './entities/chat-message.entity';
-import { getRetrievalUserPrompt, getSystemPrompt } from './utils/aichat.util';
+import {
+  generatePrompt,
+  generateSimplifiedPromptDisplay,
+  getRetrievalUserPrompt,
+  getSystemPrompt,
+} from './utils/aichat.util';
 @Injectable()
 export class AichatService {
   private openai: OpenAI;
@@ -32,14 +37,31 @@ export class AichatService {
     });
   }
 
-  async getChatMessages(cardId: string) {
+  async getChatMessages(cardId: string, chunkId?: string) {
+    const whereCondition: any = { card: { uuid: cardId } };
+
+    // 只有当chunkId有值时才添加它作为查询条件
+    if (chunkId) {
+      whereCondition.chunkId = chunkId;
+    }
+
     const messages = await this.messageRepository.find({
-      where: { card: { uuid: cardId } },
+      where: whereCondition,
       order: { createdAt: 'DESC' },
     });
 
+    const retMessages = messages.map((message) => {
+      return {
+        ...message,
+        content:
+          message.role === MessageRole.USER && message.prompt_config
+            ? generateSimplifiedPromptDisplay(message.prompt_config)
+            : message.content,
+      };
+    });
+
     return {
-      messages,
+      messages: retMessages,
     };
   }
 
@@ -57,13 +79,21 @@ export class AichatService {
       // }
       const card = await this.cardRepository.findOne({
         where: { uuid: dto.cardId },
+        relations: ['deck'],
       });
       const cardId = card.id;
-
+      let content: string;
       let globalContext: string;
-      if (dto.mode === ContextMode.Global) {
+      if (dto.chatcontext === ChatContextType.Deck) {
+        content = generatePrompt(
+          dto.chatcontext,
+          dto.contextContent,
+          dto.chattype,
+          dto.selectionText,
+          dto.question,
+        );
         const keywords = await this.embeddingService.generateSearchKeywords(
-          dto.content,
+          content,
         );
         console.log('keywords', keywords);
         const globalContextSet = new Set<string>();
@@ -71,13 +101,19 @@ export class AichatService {
           const similarContentWithScores =
             await this.embeddingService.searchSimilarContent(cardId, keyword);
           similarContentWithScores.forEach((result) => {
-            globalContextSet.add(
-              `${result[0].pageContent}(${result[0].metadata.start}-${result[0].metadata.end})`,
-            );
+            globalContextSet.add(result[0].pageContent);
           });
         }
         globalContext = Array.from(globalContextSet).join('\n');
         console.log('globalContext', globalContext);
+      } else if (dto.chatcontext === ChatContextType.Card) {
+        content = generatePrompt(
+          dto.chatcontext,
+          dto.contextContent,
+          dto.chattype,
+          dto.selectionText,
+          dto.question,
+        );
       }
 
       // const userMessage = queryRunner.manager.create(ChatMessage, {
@@ -92,24 +128,29 @@ export class AichatService {
       const userMessage = {
         role: MessageRole.USER,
         content:
-          dto.mode === ContextMode.Global
-            ? getRetrievalUserPrompt(globalContext, dto.content)
-            : dto.content,
+          dto.chatcontext === ChatContextType.Deck
+            ? getRetrievalUserPrompt(globalContext, content)
+            : content,
       };
 
       let history: ChatMessage[] = [];
-      if (dto.mode === ContextMode.Local) {
-        //如果是基于单个卡片的对话，则需要获取最近5条消息，并且只需要获得单张卡片上下文
-        history = await this.messageRepository.find({
-          where: { card: { id: cardId }, chunkId: dto.chunkId },
-          order: { createdAt: 'DESC' },
-          take: 5,
-        });
+
+      const whereCondition: any = { card: { id: cardId } };
+
+      if (dto.chunkId) {
+        whereCondition.chunkId = dto.chunkId;
       }
+
+      history = await this.messageRepository.find({
+        where: whereCondition,
+        order: { createdAt: 'DESC' },
+        take: 5,
+      });
+
       const messages: ChatCompletionMessageParam[] = [
         {
           role: 'system',
-          content: getSystemPrompt(dto.mode),
+          content: getSystemPrompt(card.deck.deckType),
         },
         ...history.reverse().map((msg) => ({
           role: msg.role,
@@ -131,14 +172,21 @@ export class AichatService {
       const entities = [
         this.messageRepository.create({
           card: { id: cardId },
-          chunkId: dto.chunkId,
-          content: dto.content,
+          chunkId: dto.chunkId || null,
+          content: userMessage.content,
           role: MessageRole.USER,
+          prompt_config: {
+            chatcontext: dto.chatcontext,
+            contextContent: dto.contextContent,
+            chattype: dto.chattype,
+            selectionText: dto.selectionText,
+            question: dto.question,
+          },
           model: dto.model,
         }),
         this.messageRepository.create({
           card: { id: cardId },
-          chunkId: dto.chunkId,
+          chunkId: dto.chunkId || null,
           content: completion.choices[0].message.content,
           role: MessageRole.ASSISTANT,
           model: dto.model,
@@ -151,7 +199,10 @@ export class AichatService {
 
       return {
         userMessage,
-        aiMessage: completion.choices[0].message.content,
+        aiMessage: {
+          role: MessageRole.ASSISTANT,
+          content: completion.choices[0].message.content,
+        },
       };
     } catch (error) {
       this.logger.error(`Error in createMessage: ${error.message}`);
