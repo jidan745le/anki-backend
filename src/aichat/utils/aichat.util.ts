@@ -89,16 +89,7 @@ export function generatePrompt(
     case ChatType.Explain:
       typePrompt = `请对${
         selectionText ? '选中的内容' : '上下文中的知识点'
-      }提供详细解释。
-
-请包括以下方面：
-1. 核心概念定义和基本原理
-2. 重要特性或组成部分
-3. 实际应用场景或例子
-4. 与相关概念的联系与区别
-5. 便于记忆和理解的技巧
-
-解释应当清晰、系统且易于理解，适合Anki卡片学习场景。`;
+      }提供详细解释。`;
       break;
 
     case ChatType.Ask:

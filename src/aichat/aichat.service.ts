@@ -82,6 +82,7 @@ export class AichatService {
         relations: ['deck'],
       });
       const cardId = card.id;
+      const deckId = card.deck.id;
       let content: string;
       let globalContext: string;
       if (dto.chatcontext === ChatContextType.Deck) {
@@ -92,6 +93,7 @@ export class AichatService {
           dto.selectionText,
           dto.question,
         );
+        console.log('content', content);
         const keywords = await this.embeddingService.generateSearchKeywords(
           content,
         );
@@ -99,14 +101,19 @@ export class AichatService {
         const globalContextSet = new Set<string>();
         for (const keyword of keywords) {
           const similarContentWithScores =
-            await this.embeddingService.searchSimilarContent(cardId, keyword);
+            await this.embeddingService.searchSimilarContent(deckId, keyword);
+          console.log('similarContentWithScores', similarContentWithScores);
           similarContentWithScores.forEach((result) => {
             globalContextSet.add(result[0].pageContent);
           });
         }
         globalContext = Array.from(globalContextSet).join('\n');
-        console.log('globalContext', globalContext);
-      } else if (dto.chatcontext === ChatContextType.Card) {
+        console.log(
+          'globalContext',
+          Array.from(globalContextSet),
+          globalContext,
+        );
+      } else {
         content = generatePrompt(
           dto.chatcontext,
           dto.contextContent,
@@ -132,7 +139,7 @@ export class AichatService {
             ? getRetrievalUserPrompt(globalContext, content)
             : content,
       };
-
+      console.log('userMessage', userMessage);
       let history: ChatMessage[] = [];
 
       const whereCondition: any = { card: { id: cardId } };

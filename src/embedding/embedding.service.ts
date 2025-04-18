@@ -3,6 +3,7 @@ import { Chroma } from '@langchain/community/vectorstores/chroma';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import { ChromaClient } from 'chromadb';
 import { Document } from 'langchain/document';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 const isDevelopment = process.env.NODE_ENV === 'development';
@@ -61,11 +62,17 @@ export class EmbeddingService {
 
       // 创建向量存储
       // const persistDirectory = `chroma_db/deck_${deckId}`;
+      console.log('collectionName', `deck_${deckId}_vectors`);
       const vectorStore = await Chroma.fromDocuments(splitDocs, embeddings, {
         collectionName: `deck_${deckId}_vectors`,
         url: !isDevelopment
           ? 'http://vector-database:8000'
           : 'http://127.0.0.1:8000',
+        collectionMetadata: {
+          'hnsw:space': 'cosine',
+          embedding_function: 'nomic-ai/nomic-embed-text-v1',
+          embedding_dimension: 768,
+        },
       });
 
       // 持久化存储
@@ -89,7 +96,7 @@ export class EmbeddingService {
   // 生成搜索关键词
   async generateSearchKeywords(query: string): Promise<string[]> {
     try {
-      const prompt = `生成5到10个精准的搜索关键词或短语，这些关键词将用于在技术文档库中检索相关信息。每个关键词应该简洁、精确，并且从不同角度覆盖用户问题的核心要素。请直接列出这些关键词，每行一个，不要有编号或其他说明。用户问题: ${query}`;
+      const prompt = `生成4个精准的搜索关键词或短语，这些关键词将用于在技术文档库中检索相关信息。每个关键词应该简洁、精确，并且从不同角度覆盖用户问题的核心要素。请直接列出这些关键词，每行一个，不要有编号或其他说明。用户问题: ${query}`;
 
       // 调用 DeepSeek R1 模型 API
       const response = await axios.post(
@@ -122,16 +129,49 @@ export class EmbeddingService {
     }
   }
 
+  async deleteVectorStore(deckId: number) {
+    // const embeddings = new HuggingFaceTransformersEmbeddings({
+    //   model: 'nomic-ai/nomic-embed-text-v1',
+    // });
+    // const vectorStore = await Chroma.fromExistingCollection(embeddings, {
+    //   collectionName: `deck_${deckId}_vectors`,
+    //   url: !isDevelopment
+    //     ? 'http://vector-database:8000'
+    //     : 'http://127.0.0.1:8000',
+    // });
+    // await vectorStore.collection.delete({});
+    const collectionName = `deck_${deckId}_vectors`;
+    const url = !isDevelopment
+      ? 'http://vector-database:8000'
+      : 'http://127.0.0.1:8000';
+
+    // 创建Chroma客户端
+    const chromaClient = new ChromaClient({
+      path: url,
+    });
+    const collections = await chromaClient.listCollections();
+    console.log(collections, 'collections1');
+    // 删除整个collection
+    await chromaClient.deleteCollection({
+      name: collectionName,
+    });
+    const collections2 = await chromaClient.listCollections();
+    console.log(collections2, 'collections2');
+  }
+
   // 增强的相似内容搜索方法
   async searchSimilarContent(deckId: number, query: string) {
     try {
       const embeddings = new HuggingFaceTransformersEmbeddings({
         model: 'nomic-ai/nomic-embed-text-v1',
       });
+      console.log('collectionName', `deck_${deckId}_vectors`);
 
       const vectorStore = await Chroma.fromExistingCollection(embeddings, {
         collectionName: `deck_${deckId}_vectors`,
-        url: 'http://vector-database:8000',
+        url: !isDevelopment
+          ? 'http://vector-database:8000'
+          : 'http://127.0.0.1:8000',
       });
 
       // vectorStore.collection.delete()

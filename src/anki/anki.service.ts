@@ -498,6 +498,7 @@ export class AnkiService implements OnApplicationBootstrap {
 
   async deleteDeck(deckId: number): Promise<void> {
     await this.deckRepository.delete(deckId);
+    await this.embeddingService.deleteVectorStore(deckId);
   }
 
   async updateCard(updateAnkiDto: UpdateAnkiDto): Promise<Card> {
