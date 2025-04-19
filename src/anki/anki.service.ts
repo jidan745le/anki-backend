@@ -1,5 +1,4 @@
 import {
-  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -17,11 +16,11 @@ import * as path from 'path';
 import puppeteer from 'puppeteer';
 import { RedisClientType } from 'redis';
 import { EmbeddingService } from 'src/embedding/embedding.service';
-import { User } from 'src/user/entities/user.entity';
 import { WebsocketGateway } from 'src/websocket/websocket.gateway';
 import { WebSocketService } from 'src/websocket/websocket.socket';
 
-import { EntityManager, LessThan, Repository } from 'typeorm';
+import { Grade } from 'ts-fsrs';
+import { EntityManager, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { CreateAnkiDto } from './dto/create-anki.dto';
 import { CreateDeckDto } from './dto/create-deck.dto';
@@ -29,18 +28,14 @@ import {
   CreatePodcastDeckDto,
   PodcastType,
 } from './dto/create-podcast-deck.dto';
-import { DeckConfigDto } from './dto/deck-config.dto';
 import { SplitAudioDto } from './dto/split-audio.dto';
 import { UpdateAnkiDto } from './dto/update-anki.dto';
-import {
-  Card,
-  CardType,
-  ContentType,
-  ReviewQuality,
-} from './entities/card.entity';
+import { Card, CardType, ContentType } from './entities/card.entity';
 import { DeckSettings } from './entities/deck-settings.entity';
 import { Deck, DeckStatus, DeckType } from './entities/deck.entity';
-
+import { UserCard } from './entities/user-cards.entity';
+import { FSRSService } from './fsrs.service';
+import { UserDeckService } from './user-deck.service';
 const isDevelopment = process.env.NODE_ENV === 'development';
 @Injectable()
 export class AnkiService implements OnApplicationBootstrap {
@@ -48,7 +43,10 @@ export class AnkiService implements OnApplicationBootstrap {
     private configService: ConfigService,
     private readonly websocketGateway: WebsocketGateway,
     private readonly embeddingService: EmbeddingService,
+    private readonly userDeckService: UserDeckService,
     private readonly websocketService: WebSocketService,
+    private readonly userCardRepository: Repository<UserCard>,
+    private readonly fsrsService: FSRSService,
   ) {
     console.log('AnkiService constructor');
     // 获取 ffmpeg 路径
@@ -152,64 +150,6 @@ export class AnkiService implements OnApplicationBootstrap {
         data.message,
       );
     });
-  }
-
-  private getStatsCacheKey(deckId: number) {
-    return `deck:${deckId}:stats`;
-  }
-
-  async getDeckStats(deckId: number) {
-    const cacheKey = this.getStatsCacheKey(deckId);
-
-    // 尝试从Redis获取缓存
-    const cached = await this.redisClient.get(cacheKey);
-    console.log(cacheKey, cached, 'stats');
-
-    if (cached) {
-      return JSON.parse(cached);
-    }
-
-    // 计算新的统计数据
-    const stats = await this.calculateStats(deckId);
-
-    // 缓存到Redis，设置5分钟过期
-    await this.redisClient.set(cacheKey, JSON.stringify(stats), { EX: 300 });
-
-    return stats;
-  }
-
-  private async calculateStats(deckId: number) {
-    const now = new Date();
-
-    const [newCardsCount, dueCardsCount, totalReviewCardsCount] =
-      await Promise.all([
-        this.cardRepository.count({
-          where: {
-            deck: { id: deckId },
-            card_type: CardType.NEW,
-          },
-        }),
-        this.cardRepository.count({
-          where: {
-            deck: { id: deckId },
-            card_type: CardType.REVIEW,
-            nextReviewTime: LessThan(now),
-          },
-        }),
-        this.cardRepository.count({
-          where: {
-            deck: { id: deckId },
-            card_type: CardType.REVIEW,
-          },
-        }),
-      ]);
-
-    return {
-      newCards: newCardsCount,
-      dueCards: dueCardsCount,
-      totalReviewCards: totalReviewCardsCount,
-      totalCards: newCardsCount + totalReviewCardsCount,
-    };
   }
 
   async getRandomCard(deckId: number) {
@@ -327,172 +267,24 @@ export class AnkiService implements OnApplicationBootstrap {
     }
   }
 
-  async updateStatsCache(deckId: number, cardType: CardType) {
-    const cacheKey = this.getStatsCacheKey(deckId);
-    const cacheValue = await this.redisClient.get(cacheKey);
-    if (!cacheValue) {
-      return;
-    }
-    const deckStats = JSON.parse(cacheValue);
-
-    if (cardType === CardType.NEW) {
-      (deckStats.newCards = deckStats.newCards - 1),
-        (deckStats.totalReviewCards = deckStats.totalReviewCards + 1);
-    } else {
-      deckStats.dueCards = deckStats.dueCards - 1;
-    }
-
-    this.redisClient.set(cacheKey, JSON.stringify(deckStats), {
-      KEEPTTL: true,
+  async updateCardWithFSRS(userCardId: string, reviewQuality: Grade) {
+    const userCard = await this.userCardRepository.findOne({
+      where: { uuid: userCardId },
     });
+    if (!userCard) {
+      throw new NotFoundException(`User card with ID ${userCardId} not found`);
+    }
+    const result = await this.fsrsService.updateCardWithRating(
+      userCard.id,
+      reviewQuality,
+    );
+    return result;
   }
 
-  // 添加获取deck settings的缓存方法
-  private async getCachedDeckSettings(deckId: number): Promise<DeckSettings> {
-    const cacheKey = `deck:${deckId}:settings`;
-
-    // 尝试从缓存获取
-    const cachedSettings = await this.redisClient.get(cacheKey);
-    if (cachedSettings) {
-      return JSON.parse(cachedSettings);
-    }
-
-    // 如果缓存中没有，从数据库获取
-    const settings = await this.deckSettingsRepository.findOne({
-      where: { deck: { id: deckId } },
-    });
-
-    // 使用默认值或数据库中的值
-    const finalSettings = settings || {
-      hardInterval: 1440, // 默认1天
-      easyInterval: 4320, // 默认3天
-    };
-
-    // 缓存结果，设置1小时过期
-    await this.redisClient.set(cacheKey, JSON.stringify(finalSettings), {
-      EX: 3600, // 1小时过期
-    });
-
-    return finalSettings as DeckSettings;
-  }
-
-  // 修改 updateCardWithSM2 方法
-  async updateCardWithSM2(
-    deckId: number,
-    cardId: number,
-    quality: ReviewQuality,
-  ): Promise<Card> {
-    const card = await this.cardRepository.findOne({ where: { id: cardId } });
-    if (!card) {
-      throw new NotFoundException(`Card with ID ${cardId} not found`);
-    }
-
-    const now = new Date();
-    this.updateStatsCache(deckId, card.card_type);
-
-    // 获取缓存的deck settings
-    const deckSettings = await this.getCachedDeckSettings(deckId);
-
-    // 更新复习次数
-    card.repetitions = (card.repetitions || 0) + 1;
-    card.lastReviewTime = now;
-
-    // 计算下次复习时间
-    const nextReview = new Date(now);
-
-    if (quality < ReviewQuality.HARD) {
-      // 如果回答困难，重置复习进度
-      card.interval = deckSettings.hardInterval;
-      nextReview.setMinutes(nextReview.getMinutes() + card.interval);
-      card.card_type = CardType.REVIEW;
-      // 降低难度因子，最低为1.3
-      card.easeFactor = Math.max(1.3, card.easeFactor - 0.2);
-    } else {
-      if (card.card_type === CardType.NEW) {
-        // 新卡片第一次复习
-        card.interval = deckSettings.easyInterval;
-        card.card_type = CardType.REVIEW;
-      } else {
-        // 根据当前间隔和难度因子计算新间隔
-        const intervalMultiplier = this.calculateIntervalMultiplier(
-          card.repetitions,
-          card.easeFactor,
-          quality,
-        );
-        card.interval = Math.round(
-          Math.max(card.interval * intervalMultiplier, 1),
-        );
-      }
-
-      // 应用新间隔
-      nextReview.setMinutes(nextReview.getMinutes() + card.interval);
-
-      // 更新难度因子
-      card.easeFactor =
-        card.easeFactor + (0.1 - (3 - quality) * (0.08 + (3 - quality) * 0.02));
-      card.easeFactor = Math.max(1.3, Math.min(2.5, card.easeFactor));
-    }
-
-    card.nextReviewTime = nextReview;
-
-    // 保存更新后的卡片
-    return await this.cardRepository.save(card);
-  }
-
-  private calculateIntervalMultiplier(
-    repetitions: number,
-    easeFactor: number,
-    quality: ReviewQuality,
-  ): number {
-    // 基础乘数基于复习质量
-    let baseMultiplier = 1;
-
-    switch (quality) {
-      case ReviewQuality.EASY:
-        baseMultiplier = 2.5;
-        break;
-      case ReviewQuality.GOOD:
-        baseMultiplier = 2.0;
-        break;
-      case ReviewQuality.HARD:
-        baseMultiplier = 1.5;
-        break;
-      default:
-        baseMultiplier = 1;
-    }
-
-    // 根据复习次数调整间隔
-    const repetitionFactor = Math.min(repetitions / 2, 2); // 最多翻倍
-
-    // 考虑难度因子的影响
-    const easeFactorNormalized = (easeFactor - 1.3) / 1.2; // 归一化到0-1范围
-
-    // 综合计算最终乘数
-    const finalMultiplier =
-      baseMultiplier * (1 + repetitionFactor) * (1 + easeFactorNormalized);
-
-    return finalMultiplier;
-  }
-
+  //获取用户所有deck pending to be implemented
   async getDecks(userId: number) {
     console.log(userId);
-
-    const results = await this.manager.find(Deck, {
-      where: { user: { id: userId } },
-      cache: false,
-    });
-
-    for (const deck of results) {
-      const stats = await this.calculateStats(deck.id);
-      await this.redisClient.set(
-        this.getStatsCacheKey(deck.id),
-        JSON.stringify(stats),
-        { EX: 300 },
-      );
-
-      Object.assign(deck, { stats });
-    }
-
+    const results = await this.userDeckService.getUserDecks(userId);
     return results;
   }
 
@@ -519,12 +311,13 @@ export class AnkiService implements OnApplicationBootstrap {
     return await this.cardRepository.save(card);
   }
 
+  //创建deck ~~~~~~~~
   async addDeck(createDeckDto: CreateDeckDto, userId: number): Promise<Deck> {
     const newDeck = new Deck();
-    const user = new User();
-    user.id = userId;
-    Object.assign(newDeck, createDeckDto, { user });
-    return await this.deckRepository.save(newDeck);
+    Object.assign(newDeck, createDeckDto);
+    const deck = await this.deckRepository.save(newDeck);
+    await this.userDeckService.assignDeckToUser(userId, deck.id);
+    return deck;
   }
 
   async parseCardsFile(file: Express.Multer.File): Promise<Card[]> {
@@ -550,35 +343,80 @@ export class AnkiService implements OnApplicationBootstrap {
     return cards;
   }
 
-  async addCards(cards: Card[], deckId: number): Promise<void> {
+  /**
+   * 为用户添加学习卡片记录
+   * @param cards 基础卡片数组
+   * @param deckId 牌组ID
+   * @param userId 用户ID
+   * @returns 创建的用户卡片记录
+   */
+  async addCardsForUserDeck(
+    cards: Card[],
+    deckId: number,
+    userId: number,
+  ): Promise<UserCard[]> {
+    // 查找牌组
     const deck = await this.deckRepository.findOne({ where: { id: deckId } });
     if (!deck) {
       throw new NotFoundException(`Deck with ID ${deckId} not found`);
     }
 
-    // 为每个卡片设置对应的 deckId
-    const cardsToSave = cards.map((card) => {
-      card.deck = deck; // 假设 Card 实体有一个 deck 属性
-      return card;
+    // 获取用户-牌组关系，主要是获取 FSRS 参数
+    const userDeck = await this.userDeckService.getUserDeck(userId, deckId);
+    if (!userDeck) {
+      throw new NotFoundException(`User-Deck relationship not found`);
+    }
+
+    // 为用户创建卡片学习记录
+    const userCards: UserCard[] = [];
+
+    const baseCardsToSave = cards.map((card) => {
+      return {
+        ...card,
+        deck,
+      };
     });
 
-    await this.cardRepository.save(cardsToSave);
-    // 构建向量存储
+    const baseCards = await this.cardRepository.save(baseCardsToSave);
+
+    for (const card of baseCards) {
+      // 创建用户卡片
+      const userCard = this.userCardRepository.create({
+        user: { id: userId },
+        card,
+        deck,
+        front: card.front, // 从基础卡片复制内容
+        customBack: null, // 初始没有自定义内容
+      });
+
+      this.fsrsService.initializeUserCard(userCard);
+
+      userCards.push(userCard);
+    }
+    // 批量保存用户卡片
+    const savedUserCards = await this.userCardRepository.save(userCards);
+
+    // 构建向量存储，使用用户卡片内容
     await this.embeddingService.buildVectorStore(
-      cardsToSave.map((card) => {
+      baseCards.map((card) => {
         return {
-          text: card.back,
+          text: card.back, // 使用基础卡片的背面内容
           front: card.front,
         };
       }),
       deckId,
     );
+
+    return savedUserCards;
   }
+
   async createCard(
     dto: CreateAnkiDto & { originalName?: string; contentType?: ContentType },
+    userId: number,
   ): Promise<Card> {
     const { deckId, front, back, originalName, contentType } = dto;
     return await this.createNormalCard(this.cardRepository, {
+      userId,
       deckId,
       front,
       back,
@@ -590,28 +428,46 @@ export class AnkiService implements OnApplicationBootstrap {
   private async createNormalCard(
     cardRepository: Repository<Card>,
     data: {
+      userId: number;
       deckId: number;
       front: string;
       back: string;
       contentType: ContentType;
     },
   ): Promise<Card> {
-    const { deckId, front, back, contentType } = data;
+    const { deckId, front, back, contentType, userId } = data;
+    let baseCard;
+    const deck = await this.getDeck(deckId);
+    if (deck.creatorId === userId) {
+      // 如果牌组创作者是用户，则创建卡片到
+      const card = cardRepository.create({
+        deck: { id: deckId },
+        frontType: contentType || ContentType.TEXT,
+        front,
+        back,
+      });
 
-    // 先创建实体实例
-    const card = cardRepository.create({
-      deck: { id: deckId },
-      frontType: contentType || ContentType.TEXT,
-      front,
-      back,
-      card_type: CardType.NEW,
-      easeFactor: 2.5,
-      interval: 0,
-      repetitions: 0,
-    });
+      // 保存实例
+      baseCard = await cardRepository.save(card);
+    }
 
     // 保存实例
-    return await cardRepository.save(card);
+
+    // 创建用户卡片
+    const userCard = this.userCardRepository.create({
+      user: { id: userId },
+      card: baseCard || null,
+      deck: { id: deckId },
+      front: baseCard.front,
+      customBack: null,
+    });
+
+    this.fsrsService.initializeUserCard(userCard);
+
+    // 保存用户卡片
+    await this.userCardRepository.save(userCard);
+
+    return baseCard;
   }
 
   public createOSSClient() {
@@ -678,27 +534,30 @@ export class AnkiService implements OnApplicationBootstrap {
           nextSegment ? nextSegment.timestamp - segment.timestamp : undefined,
         );
 
-        const card = await this.createCard({
-          deckId: newDeck.id,
-          front: audioUrl,
-          back: segment.text,
-          originalName: ossFileName,
-          contentType: ContentType.AUDIO,
-        });
+        const card = await this.createCard(
+          {
+            deckId: newDeck.id,
+            front: audioUrl,
+            back: segment.text,
+            originalName: ossFileName,
+            contentType: ContentType.AUDIO,
+          },
+          userId,
+        );
 
         cards.push(card);
       }
 
       fs.unlinkSync(file.path); // 删除临时文件
 
-      const stats = await this.calculateStats(newDeck.id);
-      await this.redisClient.set(
-        this.getStatsCacheKey(newDeck.id),
-        JSON.stringify(stats),
-        { EX: 300 },
-      );
+      // const stats = await this.calculateStats(newDeck.id);
+      // await this.redisClient.set(
+      //   this.getStatsCacheKey(newDeck.id),
+      //   JSON.stringify(stats),
+      //   { EX: 300 },
+      // );
 
-      return { deck: { ...newDeck, stats }, cards };
+      return { deck: { ...newDeck, stats: {} }, cards };
     } catch (error) {
       // 发生错误时删除已上传到OSS的文件
       for (const card of cards || []) {
@@ -874,7 +733,7 @@ export class AnkiService implements OnApplicationBootstrap {
       );
 
       formData.append('taskId', newDeck.taskId);
-      formData.append('userId', newDeck.user.id.toString());
+      formData.append('userId', newDeck.users[0].id.toString());
 
       const response = await axios
         .post(
@@ -896,7 +755,7 @@ export class AnkiService implements OnApplicationBootstrap {
       const segments = response.data;
       console.log(segments, 'segments');
       this.websocketGateway.sendProgress(
-        newDeck.user.id,
+        newDeck.users[0].id,
         newDeck.taskId,
         68,
         'building vector store',
@@ -904,7 +763,7 @@ export class AnkiService implements OnApplicationBootstrap {
       // 构建向量存储
       await this.embeddingService.buildVectorStore(segments, newDeck.id);
       this.websocketGateway.sendProgress(
-        newDeck.user.id,
+        newDeck.users[0].id,
         newDeck.taskId,
         70,
         'finished vector store',
@@ -929,7 +788,7 @@ export class AnkiService implements OnApplicationBootstrap {
           : undefined;
 
         this.websocketGateway.sendProgress(
-          newDeck.user.id,
+          newDeck.users[0].id,
           newDeck.taskId,
           70 + Math.floor((i / totalSegments) * 20),
           `Processing segment ${i + 1} of ${totalSegments}`,
@@ -941,36 +800,39 @@ export class AnkiService implements OnApplicationBootstrap {
           duration,
         );
 
-        const card = await this.createCard({
-          deckId: newDeck.id,
-          front: audioUrl,
-          back: `${segment.speaker}: ${segment.text}`,
-          originalName: ossFileName,
-          contentType: ContentType.AUDIO,
-        });
+        const card = await this.createCard(
+          {
+            deckId: newDeck.id,
+            front: audioUrl,
+            back: `${segment.speaker}: ${segment.text}`,
+            originalName: ossFileName,
+            contentType: ContentType.AUDIO,
+          },
+          newDeck.users[0].id,
+        );
 
         cards.push(card);
       }
-      const stats = await this.calculateStats(newDeck.id);
+      // const stats = await this.calculateStats(newDeck.id);
       fs.unlinkSync(file.path); // 删除临时文件
-      await this.redisClient.set(
-        this.getStatsCacheKey(newDeck.id),
-        JSON.stringify(stats),
-        { EX: 300 },
-      );
+      // await this.redisClient.set(
+      //   this.getStatsCacheKey(newDeck.id),
+      //   JSON.stringify(stats),
+      //   { EX: 300 },
+      // );
 
       // 更新状态为完成
       await this.deckRepository.update(newDeck.id, {
         status: DeckStatus.COMPLETED,
       });
       this.websocketGateway.sendProgress(
-        newDeck.user.id,
+        newDeck.users[0].id,
         newDeck.taskId,
         100,
         'Processing complete',
       );
 
-      return { deck: { ...newDeck, stats }, cards };
+      return { deck: { ...newDeck, stats: {} }, cards };
     } catch (error) {
       throw error;
     }
@@ -1091,13 +953,16 @@ export class AnkiService implements OnApplicationBootstrap {
           );
           console.log(audioUrl, 'audioUrl');
 
-          const card = await this.createCard({
-            deckId: newDeck.id,
-            front: audioUrl,
-            back: `${segment.role}: ${segment.text}`,
-            originalName: ossFileName,
-            contentType: ContentType.AUDIO,
-          });
+          const card = await this.createCard(
+            {
+              deckId: newDeck.id,
+              front: audioUrl,
+              back: `${segment.role}: ${segment.text}`,
+              originalName: ossFileName,
+              contentType: ContentType.AUDIO,
+            },
+            newDeck.users[0].id,
+          );
 
           cards.push(card);
 
@@ -1105,12 +970,12 @@ export class AnkiService implements OnApplicationBootstrap {
         }
         fs.unlinkSync(filePath); // 删除临时文件
         onProgress(90, 'Calculating statistics');
-        const stats = await this.calculateStats(newDeck.id);
-        await this.redisClient.set(
-          this.getStatsCacheKey(newDeck.id),
-          JSON.stringify(stats),
-          { EX: 300 },
-        );
+        // const stats = await this.calculateStats(newDeck.id);
+        // await this.redisClient.set(
+        //   this.getStatsCacheKey(newDeck.id),
+        //   JSON.stringify(stats),
+        //   { EX: 300 },
+        // );
 
         // 更新状态为完成
         await this.deckRepository.update(newDeck.id, {
@@ -1118,7 +983,7 @@ export class AnkiService implements OnApplicationBootstrap {
         });
         onProgress(100, 'Processing complete');
 
-        return { deck: { ...newDeck, stats }, cards };
+        return { deck: { ...newDeck, stats: {} }, cards };
       }
     } catch (error) {
       for (const card of cards || []) {
@@ -1132,84 +997,6 @@ export class AnkiService implements OnApplicationBootstrap {
     } finally {
       await browser.close();
     }
-  }
-
-  // 修改 configureDeck 方法以清除缓存
-  async configureDeck(
-    deckId: number,
-    config: DeckConfigDto,
-    userId: number,
-  ): Promise<DeckSettings> {
-    const deck = await this.deckRepository.findOne({
-      where: { id: deckId },
-      relations: ['user'],
-    });
-
-    if (!deck) {
-      throw new NotFoundException(`Deck with ID ${deckId} not found`);
-    }
-
-    // Check if user owns the deck
-    if (deck.user.id !== userId) {
-      throw new ForbiddenException(
-        'You do not have permission to configure this deck',
-      );
-    }
-
-    let settings = await this.deckSettingsRepository.findOne({
-      where: { deck: { id: deckId } },
-    });
-
-    if (!settings) {
-      settings = this.deckSettingsRepository.create({
-        deck,
-        ...config,
-      });
-    } else {
-      Object.assign(settings, config);
-    }
-
-    const settingsResult = await this.deckSettingsRepository.save(settings);
-
-    // 更新后清除缓存
-    const cacheKey = `deck:${deckId}:settings`;
-    await this.redisClient.del(cacheKey);
-
-    return settingsResult;
-  }
-
-  async getDeckConfig(deckId: number, userId: number): Promise<DeckSettings> {
-    const deck = await this.deckRepository.findOne({
-      where: { id: deckId },
-      relations: ['user'],
-    });
-
-    if (!deck) {
-      throw new NotFoundException(`Deck with ID ${deckId} not found`);
-    }
-
-    // Check if user owns the deck
-    if (deck.user.id !== userId) {
-      throw new ForbiddenException(
-        'You do not have permission to view this deck configuration',
-      );
-    }
-
-    const settings = await this.deckSettingsRepository.findOne({
-      where: { deck: { id: deckId } },
-    });
-
-    if (!settings) {
-      // Return default settings if none exist
-      return {
-        id: null,
-        hardInterval: 1440, // 1 day in minutes
-        easyInterval: 4320, // 3 days in minutes
-        deck: deck,
-      };
-    }
-
-    return settings;
   }
 
   // 添加相似内容搜索方法

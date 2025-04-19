@@ -1,9 +1,16 @@
 import { PartialType } from '@nestjs/mapped-types';
+import { IsInt, IsString } from 'class-validator';
+import { Grade } from 'ts-fsrs';
 import { CreateAnkiDto } from './create-anki.dto';
-import { IsInt } from 'class-validator';
-
-
 export class UpdateAnkiDto extends PartialType(CreateAnkiDto) {
-    @IsInt()
-    id: number; // 卡片 ID，作为更新请求的一部分
+  @IsInt()
+  id: number; // 卡片 ID，作为更新请求的一部分
+}
+
+export class UpdateCardWithFSRSDto {
+  @IsString()
+  userCardId: string;
+
+  @IsInt()
+  reviewQuality: Grade;
 }

@@ -1,8 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
+  ParseIntPipe,
   Post,
   Query,
   Req,
@@ -19,21 +21,23 @@ import { AnkiService } from './anki.service';
 import { CreateAnkiDto } from './dto/create-anki.dto';
 import { CreateDeckDto } from './dto/create-deck.dto';
 import { SplitAudioDto } from './dto/split-audio.dto';
-import { UpdateAnkiDto } from './dto/update-anki.dto';
-import { ReviewQuality } from './entities/card.entity';
+import { UpdateAnkiDto, UpdateCardWithFSRSDto } from './dto/update-anki.dto';
 
 import { FileInterceptor } from '@nestjs/platform-express';
 import { v4 as uuidv4 } from 'uuid';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { CreatePodcastDeckDto } from './dto/create-podcast-deck.dto';
-import { DeckConfigDto } from './dto/deck-config.dto';
+import { AssignDeckDto } from './dto/user-deck.dto';
 import { DeckStatus, DeckType } from './entities/deck.entity';
+import { UserDeckService } from './user-deck.service';
+
 @UseGuards(LoginGuard)
 @Controller('anki')
 export class AnkiController {
   constructor(
     private readonly ankiService: AnkiService,
     private readonly websocketGateway: WebsocketGateway,
+    private readonly userDeckService: UserDeckService,
   ) {}
 
   @Get('getNextCard')
@@ -41,18 +45,10 @@ export class AnkiController {
     return await this.ankiService.getNextCard(Number(deckId));
   }
 
-  @Get('getDeckStats')
-  async getDeckStats(@Query('deckId') deckId: string) {
-    return await this.ankiService.getDeckStats(Number(deckId));
-  }
-
-  @Post('updateCardWithSM2/:reviewQuality')
-  async updateCardWithSM2(
-    @Body() body: UpdateAnkiDto,
-    @Param('reviewQuality') reviewQuality: ReviewQuality,
-  ) {
-    const { id, deckId } = body;
-    return await this.ankiService.updateCardWithSM2(deckId, id, reviewQuality);
+  @Post('updateCardWithFSRS')
+  async updateCardWithFSRS(@Body() body: UpdateCardWithFSRSDto) {
+    const { userCardId, reviewQuality } = body;
+    return await this.ankiService.updateCardWithFSRS(userCardId, reviewQuality);
   }
 
   @Get('getDecks')
@@ -62,8 +58,9 @@ export class AnkiController {
   }
 
   @Post('addCard')
-  async addCard(@Body(ValidationPipe) card: CreateAnkiDto) {
-    return await this.ankiService.createCard(card);
+  async addCard(@Body(ValidationPipe) card: CreateAnkiDto, @Req() req) {
+    const userId: number = req?.user?.id;
+    return await this.ankiService.createCard(card, userId);
   }
 
   @Post('updateCard')
@@ -102,9 +99,10 @@ export class AnkiController {
       const newDeck = await this.ankiService.addDeck(deck, userId);
       if (file) {
         const cards = await this.ankiService.parseCardsFile(file);
-        const insertedCards = await this.ankiService.addCards(
+        const insertedCards = await this.ankiService.addCardsForUserDeck(
           cards,
           newDeck.id,
+          userId,
         );
       }
       return newDeck;
@@ -295,19 +293,34 @@ export class AnkiController {
     };
   }
 
-  @Post('configureDeck/:deckId')
-  async configureDeck(
-    @Param('deckId') deckId: number,
-    @Body(ValidationPipe) config: DeckConfigDto,
+  @Post('user-decks/assign')
+  async assignDeckToUser(@Body() assignDeckDto: AssignDeckDto, @Req() req) {
+    const userId: number = req?.user?.id;
+    return await this.userDeckService.assignDeckToUser(
+      userId,
+      assignDeckDto.deckId,
+      assignDeckDto.fsrsParameters,
+    );
+  }
+
+  @Get('user-decks')
+  async getUserDecks(@Req() req) {
+    const userId: number = req?.user?.id;
+    return await this.userDeckService.getUserDecks(userId);
+  }
+
+  @Get('user-decks/:deckId')
+  async getUserDeck(@Param('deckId', ParseIntPipe) deckId: number, @Req() req) {
+    const userId: number = req?.user?.id;
+    return await this.userDeckService.getUserDeck(userId, deckId);
+  }
+
+  @Delete('user-decks/:deckId')
+  async removeUserDeck(
+    @Param('deckId', ParseIntPipe) deckId: number,
     @Req() req,
   ) {
     const userId: number = req?.user?.id;
-    return await this.ankiService.configureDeck(deckId, config, userId);
-  }
-
-  @Get('getDeckConfig/:deckId')
-  async getDeckConfig(@Param('deckId') deckId: number, @Req() req) {
-    const userId: number = req?.user?.id;
-    return await this.ankiService.getDeckConfig(deckId, userId);
+    return await this.userDeckService.removeUserDeck(userId, deckId);
   }
 }

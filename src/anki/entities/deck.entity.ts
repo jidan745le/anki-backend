@@ -1,17 +1,17 @@
 // src/entities/deck.entity.ts
 import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  OneToMany,
-  CreateDateColumn,
-  UpdateDateColumn,
-  ManyToOne,
   BeforeInsert,
+  Column,
+  CreateDateColumn,
+  Entity,
+  OneToMany,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
-import { Card } from './card.entity';
-import { User } from '../../user/entities/user.entity';
 import { v4 as uuidv4 } from 'uuid';
+import { User } from '../../user/entities/user.entity';
+import { Card } from './card.entity';
+import { UserDeck } from './user-deck.entity';
 
 export enum DeckType {
   NORMAL = 'normal',
@@ -59,10 +59,13 @@ export class Deck {
   @OneToMany(() => Card, (card) => card.deck)
   cards: Card[];
 
-  @ManyToOne(() => User, (user) => user.decks, {
-    onDelete: 'CASCADE',
-  })
-  user: User;
+  // 牌组的用户关系
+  @OneToMany(() => UserDeck, (userDeck) => userDeck.deck)
+  userDecks: UserDeck[];
+
+  // 创建者/拥有者 (可选，用于向后兼容)
+  @Column({ nullable: true })
+  creatorId: number;
 
   @Column({ nullable: true })
   taskId: string;
@@ -79,5 +82,10 @@ export class Deck {
     if (!this.uuid) {
       this.uuid = uuidv4();
     }
+  }
+
+  // 获取拥有此牌组的用户 (可选，用于向后兼容)
+  get users(): User[] {
+    return this.userDecks?.map((ud) => ud.user) || [];
   }
 }

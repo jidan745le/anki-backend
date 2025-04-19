@@ -1,4 +1,3 @@
-import { ChatMessage } from 'src/aichat/entities/chat-message.entity';
 import {
   BeforeInsert,
   Column,
@@ -12,6 +11,7 @@ import {
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { Deck } from './deck.entity';
+import { UserCard } from './user-cards.entity';
 
 export enum CardType {
   NEW = 'new',
@@ -59,40 +59,6 @@ export class Card {
   @Column({ type: 'text' })
   back: string;
 
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
-  nextReviewTime: Date;
-
-  @Column({ type: 'timestamp', nullable: true })
-  lastReviewTime: Date; // 添加上次复习时间
-
-  @Column({ type: 'int', default: 0 })
-  interval: number;
-
-  @Column({
-    type: 'decimal',
-    precision: 4,
-    scale: 2,
-    default: 2.5,
-    transformer: {
-      to: (value: number) => value,
-      from: (value: string) => parseFloat(value),
-    },
-  })
-  easeFactor: number;
-
-  @Column({ type: 'int', default: 0 })
-  repetitions: number; // 添加复习次数
-
-  @Column({
-    type: 'enum',
-    enum: CardType,
-    default: CardType.NEW,
-  })
-  card_type: CardType;
-
-  @Column('tinyint', { default: 0 })
-  reviewed: boolean;
-
   @Column({ type: 'varchar', length: 255, nullable: true })
   tags: string;
 
@@ -100,14 +66,14 @@ export class Card {
   @JoinColumn({ name: 'deck_id' })
   deck: Deck;
 
+  @OneToMany(() => UserCard, (userCard) => userCard.card)
+  userCards: UserCard[];
+
   @CreateDateColumn()
   createdAt: Date;
 
   @UpdateDateColumn()
   updatedAt: Date;
-
-  @OneToMany(() => ChatMessage, (chatMessage) => chatMessage.card)
-  messages: ChatMessage[];
 
   @BeforeInsert()
   generateUuid() {

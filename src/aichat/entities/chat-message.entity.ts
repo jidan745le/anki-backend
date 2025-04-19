@@ -1,4 +1,4 @@
-import { Card } from 'src/anki/entities/card.entity';
+import { UserCard } from 'src/anki/entities/user-cards.entity';
 import {
   BeforeInsert,
   Column,
@@ -81,11 +81,11 @@ export class ChatMessage {
   @Column('int', { nullable: true })
   totalTokens: number;
 
-  @ManyToOne(() => Card, (card) => card.messages, {
+  @ManyToOne(() => UserCard, (userCard) => userCard.messages, {
     onDelete: 'CASCADE',
   })
-  @JoinColumn({ name: 'card_id' })
-  card: Card;
+  @JoinColumn({ name: 'user_card_id' })
+  userCard: UserCard;
 
   @CreateDateColumn()
   createdAt: Date;

@@ -10,6 +10,8 @@ import { AnkiModule } from './anki/anki.module';
 import { Card } from './anki/entities/card.entity';
 import { DeckSettings } from './anki/entities/deck-settings.entity';
 import { Deck } from './anki/entities/deck.entity';
+import { UserCard } from './anki/entities/user-cards.entity';
+import { UserDeck } from './anki/entities/user-deck.entity';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -43,7 +45,16 @@ import { WebsocketModule } from './websocket/websocket.module';
         database: configService.getOrThrow('DB_DATABASE'),
         synchronize: true,
         migrations: ['dist/migrations/*.js'],
-        entities: [User, AuthUser, Card, Deck, DeckSettings, ChatMessage],
+        entities: [
+          User,
+          AuthUser,
+          Card,
+          Deck,
+          DeckSettings,
+          ChatMessage,
+          UserDeck,
+          UserCard,
+        ],
         poolSize: configService.getOrThrow('DB_POOL_SIZE'),
         connectorPackage: 'mysql2',
         extra: {

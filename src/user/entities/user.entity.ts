@@ -1,4 +1,3 @@
-import { Deck } from '../../anki/entities/deck.entity';
 import {
   Column,
   CreateDateColumn,
@@ -7,6 +6,8 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { Deck } from '../../anki/entities/deck.entity';
+import { UserDeck } from '../../anki/entities/user-deck.entity';
 
 @Entity()
 export class User {
@@ -35,6 +36,12 @@ export class User {
   })
   updateTime: Date;
 
-  @OneToMany(() => Deck, (deck) => deck.user)
-  decks: Deck[];
+  // 用户的牌组关系
+  @OneToMany(() => UserDeck, (userDeck) => userDeck.user)
+  userDecks: UserDeck[];
+
+  // 保留向后兼容的方法 (可选)
+  get decks(): Deck[] {
+    return this.userDecks?.map((ud) => ud.deck) || [];
+  }
 }

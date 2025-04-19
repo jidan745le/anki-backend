@@ -178,7 +178,7 @@ export class AichatService {
       //一起插入两条 user 和 assistant 消息
       const entities = [
         this.messageRepository.create({
-          card: { id: cardId },
+          userCard: { id: cardId },
           chunkId: dto.chunkId || null,
           content: userMessage.content,
           role: MessageRole.USER,
@@ -192,7 +192,7 @@ export class AichatService {
           model: dto.model,
         }),
         this.messageRepository.create({
-          card: { id: cardId },
+          userCard: { id: cardId },
           chunkId: dto.chunkId || null,
           content: completion.choices[0].message.content,
           role: MessageRole.ASSISTANT,
