@@ -36,7 +36,7 @@ export interface PromptConfig {
 }
 
 @Entity('chat_messages')
-@Index(['card', 'createdAt'])
+@Index(['userCard', 'createdAt'])
 export class ChatMessage {
   @PrimaryGeneratedColumn()
   id: number;

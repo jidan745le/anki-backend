@@ -175,6 +175,8 @@ export class EmbeddingService {
       });
 
       // vectorStore.collection.delete()
+      // First embed the query text into a vector
+      // const queryVector = await embeddings.embedQuery(query);
 
       const results = await vectorStore.similaritySearchWithScore(query, 5);
       return results;

@@ -19,6 +19,7 @@ import { EmbeddingService } from 'src/embedding/embedding.service';
 import { WebsocketGateway } from 'src/websocket/websocket.gateway';
 import { WebSocketService } from 'src/websocket/websocket.socket';
 
+import { omit } from 'lodash';
 import { Grade } from 'ts-fsrs';
 import { EntityManager, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
@@ -29,11 +30,11 @@ import {
   PodcastType,
 } from './dto/create-podcast-deck.dto';
 import { SplitAudioDto } from './dto/split-audio.dto';
-import { UpdateAnkiDto } from './dto/update-anki.dto';
-import { Card, CardType, ContentType } from './entities/card.entity';
+import { UpdateUserCardDto } from './dto/update-anki.dto';
+import { Card, ContentType } from './entities/card.entity';
 import { DeckSettings } from './entities/deck-settings.entity';
 import { Deck, DeckStatus, DeckType } from './entities/deck.entity';
-import { UserCard } from './entities/user-cards.entity';
+import { CardState, UserCard } from './entities/user-cards.entity';
 import { FSRSService } from './fsrs.service';
 import { UserDeckService } from './user-deck.service';
 const isDevelopment = process.env.NODE_ENV === 'development';
@@ -45,6 +46,7 @@ export class AnkiService implements OnApplicationBootstrap {
     private readonly embeddingService: EmbeddingService,
     private readonly userDeckService: UserDeckService,
     private readonly websocketService: WebSocketService,
+    @InjectRepository(UserCard)
     private readonly userCardRepository: Repository<UserCard>,
     private readonly fsrsService: FSRSService,
   ) {
@@ -152,15 +154,16 @@ export class AnkiService implements OnApplicationBootstrap {
     });
   }
 
-  async getRandomCard(deckId: number) {
+  async getRandomCard(deckId: number, userId: number) {
     const now = new Date();
 
     // 70%的概率获取新卡片
     if (Math.random() < 0.7) {
-      const newCard = await this.cardRepository
-        .createQueryBuilder('card')
-        .where('card.deck_id = :deckId', { deckId })
-        .andWhere('card.card_type = :type', { type: CardType.NEW })
+      const newCard = await this.userCardRepository
+        .createQueryBuilder('userCard')
+        .where('userCard.deck_id = :deckId', { deckId })
+        .andWhere('userCard.user_id = :userId', { userId })
+        .andWhere('userCard.state = :state', { state: CardState.NEW })
         .orderBy('RAND()') // MySQL的随机排序
         .take(1)
         .getOne();
@@ -170,13 +173,31 @@ export class AnkiService implements OnApplicationBootstrap {
       }
     }
 
-    // 30%的概率或没有新卡片时，随机获取一张需要复习的卡片
-    const reviewCard = await this.cardRepository
-      .createQueryBuilder('card')
-      .where('card.deck_id = :deckId', { deckId })
-      .andWhere('card.card_type = :type', { type: CardType.REVIEW })
-      .andWhere('card.nextReviewTime <= :now', { now })
-      .orderBy('card.nextReviewTime', 'ASC') // Changed from RAND()
+    //  30%的概率或没有新卡片时返回学习中的卡片
+    const learningCard = await this.userCardRepository
+      .createQueryBuilder('userCard')
+      .where('userCard.deck_id = :deckId', { deckId })
+      .andWhere('userCard.user_id = :userId', { userId })
+      .andWhere('userCard.state IN (:...states)', {
+        states: [CardState.LEARNING, CardState.RELEARNING],
+      })
+      .andWhere('userCard.dueDate <= :now', { now })
+      .orderBy('userCard.dueDate', 'ASC')
+      .take(1)
+      .getOne();
+
+    if (learningCard) {
+      return learningCard;
+    }
+
+    // 没有学习中的卡片，随机获取一张需要复习的卡片
+    const reviewCard = await this.userCardRepository
+      .createQueryBuilder('userCard')
+      .where('userCard.deck_id = :deckId', { deckId })
+      .andWhere('userCard.user_id = :userId', { userId })
+      .andWhere('userCard.state = :state', { state: CardState.REVIEW })
+      .andWhere('userCard.dueDate <= :now', { now })
+      .orderBy('userCard.dueDate', 'ASC') // 优先显示最早到期的卡片
       .take(1)
       .getOne();
 
@@ -184,11 +205,13 @@ export class AnkiService implements OnApplicationBootstrap {
       return reviewCard;
     }
 
-    // 如果没有复习卡片，返回新卡片
-    const fallbackNewCard = await this.cardRepository
-      .createQueryBuilder('card')
-      .where('card.deck_id = :deckId', { deckId })
-      .andWhere('card.card_type = :type', { type: CardType.NEW })
+    // 如果没有可复习的卡片，返回任何新卡片
+    const fallbackNewCard = await this.userCardRepository
+      .createQueryBuilder('userCard')
+      .innerJoinAndSelect('userCard.card', 'card')
+      .where('userCard.deck_id = :deckId', { deckId })
+      .andWhere('userCard.user_id = :userId', { userId })
+      .andWhere('userCard.state = :state', { state: CardState.NEW })
       .orderBy('RAND()') // MySQL的随机排序
       .take(1)
       .getOne();
@@ -196,15 +219,16 @@ export class AnkiService implements OnApplicationBootstrap {
     if (fallbackNewCard) {
       return fallbackNewCard;
     } else {
-      const hasCards = await this.cardRepository
-        .createQueryBuilder('card')
-        .where('card.deck_id = :deckId', { deckId })
+      const hasCards = await this.userCardRepository
+        .createQueryBuilder('userCard')
+        .where('userCard.deck_id = :deckId', { deckId })
+        .andWhere('userCard.user_id = :userId', { userId })
         .getCount();
 
       if (hasCards === 0) {
-        return null; // deck中没有卡片
+        return null; // 用户没有这个牌组的卡片
       } else {
-        return {}; //目前已学完
+        return { message: 'all_done' }; // 所有卡片已经学习完成，暂时没有要复习的
       }
     }
   }
@@ -230,39 +254,41 @@ export class AnkiService implements OnApplicationBootstrap {
     return deck;
   }
 
-  async getNextCard(deckId: number) {
+  async getNextCard(deckId: number, userId: number) {
     const deck = await this.getDeck(deckId);
 
     if (deck.deckType === DeckType.AUDIO) {
-      return await this.getSequentialCard(deckId);
+      return await this.getSequentialCard(deckId, userId);
     } else {
-      return await this.getRandomCard(deckId);
+      return await this.getRandomCard(deckId, userId);
     }
   }
 
-  private async getSequentialCard(deckId: number) {
+  private async getSequentialCard(deckId: number, userId: number) {
     const now = new Date();
 
-    const card = await this.cardRepository
-      .createQueryBuilder('card')
-      .where('card.deck_id = :deckId', { deckId })
-      .andWhere('card.nextReviewTime <= :now', { now })
-      .orderBy('card.id', 'ASC')
+    const card = await this.userCardRepository
+      .createQueryBuilder('userCard')
+      .where('userCard.deck_id = :deckId', { deckId })
+      .andWhere('userCard.user_id = :userId', { userId })
+      .andWhere('userCard.dueDate   <= :now', { now })
+      .orderBy('userCard.id', 'ASC')
       .take(1)
       .getOne();
 
     if (card) {
       return card;
     } else {
-      const hasCards = await this.cardRepository
-        .createQueryBuilder('card')
-        .where('card.deck_id = :deckId', { deckId })
+      const hasCards = await this.userCardRepository
+        .createQueryBuilder('userCard')
+        .where('userCard.deck_id = :deckId', { deckId })
+        .andWhere('userCard.user_id = :userId', { userId })
         .getCount();
 
       if (hasCards === 0) {
         return null; // deck中没有卡片
       } else {
-        return {}; // 目前已学完
+        return { message: 'all_done' }; // 目前已学完
       }
     }
   }
@@ -285,7 +311,13 @@ export class AnkiService implements OnApplicationBootstrap {
   async getDecks(userId: number) {
     console.log(userId);
     const results = await this.userDeckService.getUserDecks(userId);
-    return results;
+
+    return results.map((result) => {
+      return {
+        ...omit(result, 'deck'),
+        ...result?.deck,
+      };
+    });
   }
 
   async deleteDeck(deckId: number): Promise<void> {
@@ -293,22 +325,26 @@ export class AnkiService implements OnApplicationBootstrap {
     await this.embeddingService.deleteVectorStore(deckId);
   }
 
-  async updateCard(updateAnkiDto: UpdateAnkiDto): Promise<Card> {
+  async updateUserCard(
+    updateUserCardDto: UpdateUserCardDto,
+  ): Promise<UserCard> {
     // 查找要更新卡片
-    const card = await this.cardRepository.findOne({
-      where: { id: updateAnkiDto.id },
+    const card = await this.userCardRepository.findOne({
+      where: { uuid: updateUserCardDto.id },
     });
 
     // 如果未找到卡片，抛出 NotFoundException
     if (!card) {
-      throw new NotFoundException(`Card with ID ${updateAnkiDto.id} not found`);
+      throw new NotFoundException(
+        `Card with ID ${updateUserCardDto.id} not found`,
+      );
     }
 
     // 更新卡片的属性
-    Object.assign(card, updateAnkiDto);
+    Object.assign(card, { customBack: updateUserCardDto.custom_back });
 
     // 保存更改
-    return await this.cardRepository.save(card);
+    return await this.userCardRepository.save(card);
   }
 
   //创建deck ~~~~~~~~
@@ -386,7 +422,7 @@ export class AnkiService implements OnApplicationBootstrap {
         card,
         deck,
         front: card.front, // 从基础卡片复制内容
-        customBack: null, // 初始没有自定义内容
+        customBack: card.back, // 初始没有自定义内容
       });
 
       this.fsrsService.initializeUserCard(userCard);
@@ -438,18 +474,18 @@ export class AnkiService implements OnApplicationBootstrap {
     const { deckId, front, back, contentType, userId } = data;
     let baseCard;
     const deck = await this.getDeck(deckId);
-    if (deck.creatorId === userId) {
-      // 如果牌组创作者是用户，则创建卡片到
-      const card = cardRepository.create({
-        deck: { id: deckId },
-        frontType: contentType || ContentType.TEXT,
-        front,
-        back,
-      });
+    // if (deck.creatorId === userId) {
+    //   // 如果牌组创作者是用户，则创建卡片到
+    //   const card = cardRepository.create({
+    //     deck: { id: deckId },
+    //     frontType: contentType || ContentType.TEXT,
+    //     front,
+    //     back,
+    //   });
 
-      // 保存实例
-      baseCard = await cardRepository.save(card);
-    }
+    //   // 保存实例
+    //   baseCard = await cardRepository.save(card);
+    // }
 
     // 保存实例
 
@@ -458,8 +494,8 @@ export class AnkiService implements OnApplicationBootstrap {
       user: { id: userId },
       card: baseCard || null,
       deck: { id: deckId },
-      front: baseCard.front,
-      customBack: null,
+      front: front,
+      customBack: back,
     });
 
     this.fsrsService.initializeUserCard(userCard);

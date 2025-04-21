@@ -1,12 +1,16 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Card } from 'src/anki/entities/card.entity';
+import { UserCard } from 'src/anki/entities/user-cards.entity';
 import { EmbeddingModule } from 'src/embedding/embedding.module';
 import { AichatController } from './aichat.controller';
 import { AichatService } from './aichat.service';
 import { ChatMessage } from './entities/chat-message.entity';
 @Module({
-  imports: [TypeOrmModule.forFeature([ChatMessage, Card]), EmbeddingModule],
+  imports: [
+    TypeOrmModule.forFeature([ChatMessage, Card, UserCard]),
+    EmbeddingModule,
+  ],
   controllers: [AichatController],
   providers: [AichatService],
 })

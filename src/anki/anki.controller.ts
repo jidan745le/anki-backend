@@ -21,7 +21,10 @@ import { AnkiService } from './anki.service';
 import { CreateAnkiDto } from './dto/create-anki.dto';
 import { CreateDeckDto } from './dto/create-deck.dto';
 import { SplitAudioDto } from './dto/split-audio.dto';
-import { UpdateAnkiDto, UpdateCardWithFSRSDto } from './dto/update-anki.dto';
+import {
+  UpdateCardWithFSRSDto,
+  UpdateUserCardDto,
+} from './dto/update-anki.dto';
 
 import { FileInterceptor } from '@nestjs/platform-express';
 import { v4 as uuidv4 } from 'uuid';
@@ -41,8 +44,9 @@ export class AnkiController {
   ) {}
 
   @Get('getNextCard')
-  async getNextCard(@Query('deckId') deckId: string) {
-    return await this.ankiService.getNextCard(Number(deckId));
+  async getNextCard(@Query('deckId') deckId: string, @Req() req) {
+    const userId: number = req?.user?.id;
+    return await this.ankiService.getNextCard(Number(deckId), userId);
   }
 
   @Post('updateCardWithFSRS')
@@ -64,8 +68,8 @@ export class AnkiController {
   }
 
   @Post('updateCard')
-  async updateCard(@Body(ValidationPipe) card: UpdateAnkiDto) {
-    return await this.ankiService.updateCard(card);
+  async updateCard(@Body(ValidationPipe) card: UpdateUserCardDto) {
+    return await this.ankiService.updateUserCard(card);
   }
 
   @Post('upload')

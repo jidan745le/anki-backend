@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import OpenAI from 'openai';
 import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { Card } from 'src/anki/entities/card.entity';
+import { UserCard } from 'src/anki/entities/user-cards.entity';
 import { EmbeddingService } from 'src/embedding/embedding.service';
 import { DataSource, Repository } from 'typeorm';
 import {
@@ -27,6 +28,8 @@ export class AichatService {
     private messageRepository: Repository<ChatMessage>,
     @InjectRepository(Card)
     private cardRepository: Repository<Card>,
+    @InjectRepository(UserCard)
+    private userCardRepository: Repository<UserCard>,
     private configService: ConfigService,
     private dataSource: DataSource,
     private embeddingService: EmbeddingService,
@@ -38,7 +41,7 @@ export class AichatService {
   }
 
   async getChatMessages(cardId: string, chunkId?: string) {
-    const whereCondition: any = { card: { uuid: cardId } };
+    const whereCondition: any = { userCard: { uuid: cardId } };
 
     // 只有当chunkId有值时才添加它作为查询条件
     if (chunkId) {
@@ -77,7 +80,7 @@ export class AichatService {
       //     take: 5,
       //   });
       // }
-      const card = await this.cardRepository.findOne({
+      const card = await this.userCardRepository.findOne({
         where: { uuid: dto.cardId },
         relations: ['deck'],
       });
@@ -142,7 +145,7 @@ export class AichatService {
       console.log('userMessage', userMessage);
       let history: ChatMessage[] = [];
 
-      const whereCondition: any = { card: { id: cardId } };
+      const whereCondition: any = { userCard: { id: cardId } };
 
       if (dto.chunkId) {
         whereCondition.chunkId = dto.chunkId;
@@ -153,6 +156,7 @@ export class AichatService {
         order: { createdAt: 'DESC' },
         take: 5,
       });
+      console.log('history', history, dto.chunkId);
 
       const messages: ChatCompletionMessageParam[] = [
         {

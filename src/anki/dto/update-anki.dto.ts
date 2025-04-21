@@ -7,6 +7,14 @@ export class UpdateAnkiDto extends PartialType(CreateAnkiDto) {
   id: number; // 卡片 ID，作为更新请求的一部分
 }
 
+export class UpdateUserCardDto {
+  @IsString()
+  id: string;
+
+  @IsString()
+  custom_back: string;
+}
+
 export class UpdateCardWithFSRSDto {
   @IsString()
   userCardId: string;

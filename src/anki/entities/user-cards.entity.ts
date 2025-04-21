@@ -51,7 +51,7 @@ export class UserCard {
   @JoinColumn({ name: 'deck_id' })
   deck: Deck;
 
-  @Column({ type: 'text', default: 0 })
+  @Column({ type: 'text' })
   front: string;
 
   // 自定义卡片内容

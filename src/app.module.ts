@@ -44,6 +44,7 @@ import { WebsocketModule } from './websocket/websocket.module';
         password: configService.getOrThrow('DB_PASSWORD'),
         database: configService.getOrThrow('DB_DATABASE'),
         synchronize: true,
+        logging: true,
         migrations: ['dist/migrations/*.js'],
         entities: [
           User,
