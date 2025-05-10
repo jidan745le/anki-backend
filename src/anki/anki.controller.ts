@@ -8,16 +8,13 @@ import {
   Post,
   Query,
   Req,
-  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
   ValidationPipe,
 } from '@nestjs/common';
-import * as fs from 'fs';
-import * as path from 'path';
 import { LoginGuard } from '../login.guard';
-import { AnkiService } from './anki.service';
+import { AnkiService, LearnOrder } from './anki.service';
 import { CreateAnkiDto } from './dto/create-anki.dto';
 import { CreateDeckDto } from './dto/create-deck.dto';
 import { SplitAudioDto } from './dto/split-audio.dto';
@@ -44,9 +41,23 @@ export class AnkiController {
   ) {}
 
   @Get('getNextCard')
-  async getNextCard(@Query('deckId') deckId: string, @Req() req) {
+  async getNextCard(
+    @Query('deckId') deckId: string,
+    @Query('order') order: LearnOrder = LearnOrder.RANDOM,
+    @Query('mount') mount = 'false',
+    @Req() req,
+  ) {
+    console.log('deckId', deckId);
+    console.log('order', order);
+    console.log('mount', mount);
     const userId: number = req?.user?.id;
-    return await this.ankiService.getNextCard(Number(deckId), userId);
+    const isMount = mount === 'true';
+    return await this.ankiService.getNextCard(
+      Number(deckId),
+      userId,
+      order,
+      isMount,
+    );
   }
 
   @Post('updateCardWithFSRS')
@@ -120,83 +131,6 @@ export class AnkiController {
   @Post('deleteDeck/:deckId')
   async deleteDeck(@Param('deckId') deckId: number) {
     return await this.ankiService.deleteDeck(deckId);
-  }
-
-  @Get('media/:path(*)')
-  async getMedia(@Param('path') filePath: string, @Req() req, @Res() res) {
-    try {
-      const absolutePath = path.join(process.cwd(), filePath);
-
-      // Check if file exists
-      if (!fs.existsSync(absolutePath)) {
-        return res.status(404).send('File not found');
-      }
-
-      // Get file extension
-      const ext = path.extname(absolutePath).toLowerCase();
-
-      // Set appropriate content type
-      let contentType = 'application/octet-stream';
-      switch (ext) {
-        case '.mp3':
-          contentType = 'audio/mpeg';
-          break;
-        case '.wav':
-          contentType = 'audio/wav';
-          break;
-        case '.ogg':
-          contentType = 'audio/ogg';
-          break;
-        case '.m4a':
-          contentType = 'audio/mp4';
-          break;
-        case '.jpg':
-        case '.jpeg':
-          contentType = 'image/jpeg';
-          break;
-        case '.png':
-          contentType = 'image/png';
-          break;
-        case '.gif':
-          contentType = 'image/gif';
-          break;
-      }
-
-      // Get file stats for Content-Length header
-      const stat = fs.statSync(absolutePath);
-
-      // Handle range requests for audio streaming
-      const range = req.headers.range;
-      if (range) {
-        const parts = range.replace(/bytes=/, '').split('-');
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
-        const chunksize = end - start + 1;
-        const file = fs.createReadStream(absolutePath, { start, end });
-
-        res.writeHead(206, {
-          'Content-Range': `bytes ${start}-${end}/${stat.size}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': chunksize,
-          'Content-Type': contentType,
-        });
-
-        return file.pipe(res);
-      }
-
-      // Regular request (non-range)
-      res.writeHead(200, {
-        'Content-Length': stat.size,
-        'Content-Type': contentType,
-        'Content-Disposition': 'inline',
-      });
-
-      const fileStream = fs.createReadStream(absolutePath);
-      return fileStream.pipe(res);
-    } catch (error) {
-      console.error('Error serving media:', error);
-      return res.status(500).send('Error serving media file');
-    }
   }
 
   @Post('createDeckWithAudio')

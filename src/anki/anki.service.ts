@@ -37,6 +37,29 @@ import { Deck, DeckStatus, DeckType } from './entities/deck.entity';
 import { CardState, UserCard } from './entities/user-cards.entity';
 import { FSRSService } from './fsrs.service';
 import { UserDeckService } from './user-deck.service';
+
+export enum LearnOrder {
+  RANDOM = 'random',
+  SEQUENTIAL = 'sequential',
+}
+
+export interface DeckStats {
+  newCount: number;
+  learningCount: number;
+  reviewCount: number;
+}
+
+export interface NextCardResponse {
+  card: UserCard | { message: 'all_done' } | null;
+  stats: DeckStats;
+}
+
+interface UserCardSummary {
+  uuid: string;
+  state: CardState;
+  dueDate: Date;
+}
+
 const isDevelopment = process.env.NODE_ENV === 'development';
 @Injectable()
 export class AnkiService implements OnApplicationBootstrap {
@@ -233,35 +256,128 @@ export class AnkiService implements OnApplicationBootstrap {
     }
   }
 
-  private async getDeck(deckId: number): Promise<Deck> {
-    const cacheKey = `deck:${deckId}`;
-
-    // 尝试从Redis获取缓存
-    const cachedDeck = await this.redisClient.get(cacheKey);
-    if (cachedDeck) {
-      return JSON.parse(cachedDeck);
-    }
-
-    // 如果缓存中没有,从数据库获取
-    const deck = await this.deckRepository.findOne({ where: { id: deckId } });
-    if (!deck) {
-      throw new NotFoundException(`Deck with ID ${deckId} not found`);
-    }
-
-    // 将deck存入缓存,设置过期时间为1小时
-    await this.redisClient.set(cacheKey, JSON.stringify(deck), { EX: 3600 });
-
-    return deck;
+  private getDeckStatsCacheKey(userId: number, deckId: number): string {
+    return `user:${userId}:deck:${deckId}:cards_summary`;
   }
 
-  async getNextCard(deckId: number, userId: number) {
-    const deck = await this.getDeck(deckId);
+  private async refreshUserDeckCardsInRedis(
+    userId: number,
+    deckId: number,
+  ): Promise<void> {
+    const userCards = await this.userCardRepository.find({
+      where: { user: { id: userId }, deck: { id: deckId } },
+      select: ['uuid', 'state', 'dueDate'],
+    });
+    const summaries: UserCardSummary[] = userCards.map((uc) => ({
+      uuid: uc.uuid,
+      state: uc.state,
+      dueDate: uc.dueDate,
+    }));
+    await this.redisClient.set(
+      this.getDeckStatsCacheKey(userId, deckId),
+      JSON.stringify(summaries),
+    );
+  }
 
-    if (deck.deckType === DeckType.AUDIO) {
-      return await this.getSequentialCard(deckId, userId);
+  private async updateUserCardInRedis(
+    userId: number,
+    deckId: number,
+    updatedCardSummary: UserCardSummary,
+  ): Promise<void> {
+    const cacheKey = this.getDeckStatsCacheKey(userId, deckId);
+    const cachedData = await this.redisClient.get(cacheKey);
+    const summaries: UserCardSummary[] = cachedData
+      ? JSON.parse(cachedData)
+      : [];
+    const index = summaries.findIndex(
+      (s) => s.uuid === updatedCardSummary.uuid,
+    );
+    if (index > -1) {
+      summaries[index] = updatedCardSummary;
     } else {
-      return await this.getRandomCard(deckId, userId);
+      // If for some reason it's not there, add it. Could happen if cache was cleared.
+      summaries.push(updatedCardSummary);
     }
+    await this.redisClient.set(cacheKey, JSON.stringify(summaries));
+  }
+
+  private async addUserCardToRedis(
+    userId: number,
+    deckId: number,
+    newCardSummary: UserCardSummary,
+  ): Promise<void> {
+    const cacheKey = this.getDeckStatsCacheKey(userId, deckId);
+    const cachedData = await this.redisClient.get(cacheKey);
+    const summaries: UserCardSummary[] = cachedData
+      ? JSON.parse(cachedData)
+      : [];
+    // Avoid duplicates if this is called multiple times for the same new card
+    if (!summaries.find((s) => s.uuid === newCardSummary.uuid)) {
+      summaries.push(newCardSummary);
+    }
+    await this.redisClient.set(cacheKey, JSON.stringify(summaries));
+  }
+
+  private async calculateDeckStats(
+    userId: number,
+    deckId: number,
+  ): Promise<DeckStats> {
+    const cacheKey = this.getDeckStatsCacheKey(userId, deckId);
+    const cachedData = await this.redisClient.get(cacheKey);
+    const summaries: UserCardSummary[] = cachedData
+      ? JSON.parse(cachedData)
+      : [];
+
+    const now = new Date();
+    let newCount = 0;
+    let learningCount = 0;
+    let reviewCount = 0;
+
+    for (const summary of summaries) {
+      const dueDate = new Date(summary.dueDate); // Ensure dueDate is a Date object
+      if (summary.state === CardState.NEW) {
+        newCount++;
+      } else if (
+        (summary.state === CardState.LEARNING ||
+          summary.state === CardState.RELEARNING) &&
+        dueDate <= now
+      ) {
+        learningCount++;
+      } else if (summary.state === CardState.REVIEW && dueDate <= now) {
+        reviewCount++;
+      }
+    }
+    return { newCount, learningCount, reviewCount };
+  }
+
+  async getNextCard(
+    deckId: number,
+    userId: number,
+    order: LearnOrder,
+    mount: boolean,
+  ): Promise<NextCardResponse> {
+    if (mount) {
+      await this.refreshUserDeckCardsInRedis(userId, deckId);
+    }
+
+    const stats = await this.calculateDeckStats(userId, deckId);
+
+    let nextCardToShow: UserCard | { message: 'all_done' } | null;
+
+    if (order === LearnOrder.SEQUENTIAL) {
+      // Type assertion or ensure getSequentialCard matches the expected return type more strictly
+      nextCardToShow = (await this.getSequentialCard(deckId, userId)) as
+        | UserCard
+        | { message: 'all_done' }
+        | null;
+    } else {
+      // Type assertion or ensure getRandomCard matches the expected return type more strictly
+      nextCardToShow = (await this.getRandomCard(deckId, userId)) as
+        | UserCard
+        | { message: 'all_done' }
+        | null;
+    }
+    return { card: nextCardToShow, stats };
   }
 
   private async getSequentialCard(deckId: number, userId: number) {
@@ -293,31 +409,73 @@ export class AnkiService implements OnApplicationBootstrap {
     }
   }
 
-  async updateCardWithFSRS(userCardId: string, reviewQuality: Grade) {
+  async updateCardWithFSRS(
+    userCardUuid: string,
+    reviewQuality: Grade,
+  ): Promise<UserCard> {
     const userCard = await this.userCardRepository.findOne({
-      where: { uuid: userCardId },
+      where: { uuid: userCardUuid },
+      relations: ['user', 'deck'],
     });
     if (!userCard) {
-      throw new NotFoundException(`User card with ID ${userCardId} not found`);
+      throw new NotFoundException(
+        `User card with UUID ${userCardUuid} not found`,
+      );
     }
-    const result = await this.fsrsService.updateCardWithRating(
+
+    const reviewResult = await this.fsrsService.updateCardWithRating(
       userCard.id,
       reviewQuality,
     );
-    return result;
+
+    // The fsrsService.updateCardWithRating returns an object containing the updated UserCard
+    // and saves it to the database.
+    if (reviewResult && reviewResult.card) {
+      const updatedUserCard = reviewResult.card;
+      await this.updateUserCardInRedis(userCard.user.id, userCard.deck.id, {
+        uuid: updatedUserCard.uuid, // Use uuid from the updated card
+        state: updatedUserCard.state, // Use state from the updated card
+        dueDate: updatedUserCard.dueDate, // Use dueDate from the updated card
+      });
+      return updatedUserCard; // Return the updated UserCard entity
+    } else {
+      this.logger.error(
+        `FSRS service did not return expected card data structure for ${userCardUuid}.`,
+      );
+      // This case should ideally not happen if fsrsService is working correctly.
+      // Throwing an error or returning the original card with a warning might be options.
+      // For now, throwing an error as the update is critical.
+      throw new Error(
+        `FSRS service failed to return updated card data for ${userCardUuid}`,
+      );
+    }
   }
 
   //获取用户所有deck pending to be implemented
   async getDecks(userId: number) {
-    console.log(userId);
-    const results = await this.userDeckService.getUserDecks(userId);
+    const userDecks = await this.userDeckService.getUserDecks(userId);
 
-    return results.map((result) => {
-      return {
-        ...omit(result, 'deck'),
-        ...result?.deck,
-      };
-    });
+    const decksWithStats = await Promise.all(
+      userDecks.map(async (userDeck) => {
+        if (!userDeck.deck) {
+          // Handle cases where a userDeck might not have an associated deck (should ideally not happen)
+          this.logger.warn(`UserDeck ${userDeck.id} has no associated deck.`);
+          return {
+            ...omit(userDeck, 'deck'),
+            // deck properties would be undefined here
+            stats: { newCount: 0, learningCount: 0, reviewCount: 0 }, // Default stats
+          };
+        }
+        const stats = await this.calculateDeckStats(userId, userDeck.deck.id);
+        return {
+          ...omit(userDeck, 'deck'), // Spreads properties of userDeck itself (e.g., fsrsParams)
+          ...userDeck.deck, // Spreads properties of the actual Deck entity
+          stats, // Adds the calculated statistics
+        };
+      }),
+    );
+
+    return decksWithStats;
   }
 
   async deleteDeck(deckId: number): Promise<void> {
@@ -422,7 +580,7 @@ export class AnkiService implements OnApplicationBootstrap {
         card,
         deck,
         front: card.front, // 从基础卡片复制内容
-        customBack: card.back, // 初始没有自定义内容
+        customBack: card.back,
       });
 
       this.fsrsService.initializeUserCard(userCard);
@@ -442,6 +600,9 @@ export class AnkiService implements OnApplicationBootstrap {
       }),
       deckId,
     );
+
+    // Refresh Redis cache after adding new cards
+    await this.refreshUserDeckCardsInRedis(userId, deckId);
 
     return savedUserCards;
   }
@@ -472,38 +633,35 @@ export class AnkiService implements OnApplicationBootstrap {
     },
   ): Promise<Card> {
     const { deckId, front, back, contentType, userId } = data;
-    let baseCard;
-    const deck = await this.getDeck(deckId);
-    // if (deck.creatorId === userId) {
-    //   // 如果牌组创作者是用户，则创建卡片到
-    //   const card = cardRepository.create({
-    //     deck: { id: deckId },
-    //     frontType: contentType || ContentType.TEXT,
-    //     front,
-    //     back,
-    //   });
+    let baseCard; // This seems to be potentially null if deck.creatorId !== userId or logic is removed
+    // const deck = await this.getDeck(deckId); // getDeck is already called implicitly or explicitly earlier if needed.
+    // If baseCard logic is removed, deck might not be needed here.
 
-    //   // 保存实例
-    //   baseCard = await cardRepository.save(card);
-    // }
-
-    // 保存实例
-
-    // 创建用户卡片
-    const userCard = this.userCardRepository.create({
+    // Create user card (this part seems to be the core of creating a study item for the user)
+    const userCardEntity = this.userCardRepository.create({
       user: { id: userId },
-      card: baseCard || null,
+      card: baseCard || null, // Link to base card if it exists
       deck: { id: deckId },
       front: front,
       customBack: back,
+      // Note: frontType (for UserCard) is not explicitly set here, might take from baseCard or default
     });
 
-    this.fsrsService.initializeUserCard(userCard);
+    this.fsrsService.initializeUserCard(userCardEntity);
 
-    // 保存用户卡片
-    await this.userCardRepository.save(userCard);
+    // Save user card
+    const savedUserCard = await this.userCardRepository.save(userCardEntity);
 
-    return baseCard;
+    // Add the new user card to Redis
+    if (savedUserCard) {
+      await this.addUserCardToRedis(userId, deckId, {
+        uuid: savedUserCard.uuid,
+        state: savedUserCard.state,
+        dueDate: savedUserCard.dueDate,
+      });
+    }
+
+    return baseCard; // Returns baseCard, but the user card is the one tracked for study
   }
 
   public createOSSClient() {
