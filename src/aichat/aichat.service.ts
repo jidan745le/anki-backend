@@ -96,26 +96,38 @@ export class AichatService {
           dto.selectionText,
           dto.question,
         );
+        console.log('\n');
         console.log('content', content);
+        console.log('\n');
         const keywords = await this.embeddingService.generateSearchKeywords(
           content,
         );
         console.log('keywords', keywords);
+        console.log('\n');
         const globalContextSet = new Set<string>();
-        for (const keyword of keywords) {
-          const similarContentWithScores =
-            await this.embeddingService.searchSimilarContent(deckId, keyword);
-          console.log('similarContentWithScores', similarContentWithScores);
-          similarContentWithScores.forEach((result) => {
-            globalContextSet.add(result[0].pageContent);
-          });
-        }
+        await Promise.all(
+          keywords.map((keyword) =>
+            this.embeddingService
+              .searchSimilarContent(deckId, keyword)
+              .then((similarContentWithScores) => {
+                console.log(
+                  'similarContentWithScores',
+                  similarContentWithScores,
+                );
+                similarContentWithScores.forEach((result) => {
+                  globalContextSet.add(result[0].pageContent);
+                });
+              }),
+          ),
+        );
         globalContext = Array.from(globalContextSet).join('\n');
+        console.log('\n');
         console.log(
           'globalContext',
           Array.from(globalContextSet),
           globalContext,
         );
+        console.log('\n');
       } else {
         content = generatePrompt(
           dto.chatcontext,
@@ -142,7 +154,9 @@ export class AichatService {
             ? getRetrievalUserPrompt(globalContext, content)
             : content,
       };
+      console.log('\n');
       console.log('userMessage', userMessage);
+      console.log('\n');
       let history: ChatMessage[] = [];
 
       const whereCondition: any = { userCard: { id: cardId } };

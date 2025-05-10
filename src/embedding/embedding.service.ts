@@ -96,7 +96,7 @@ export class EmbeddingService {
   // 生成搜索关键词
   async generateSearchKeywords(query: string): Promise<string[]> {
     try {
-      const prompt = `生成4个精准的搜索关键词或短语，这些关键词将用于在技术文档库中检索相关信息。每个关键词应该简洁、精确，并且从不同角度覆盖用户问题的核心要素。请直接列出这些关键词，每行一个，不要有编号或其他说明。用户问题: ${query}`;
+      const prompt = `生成4个精准的搜索关键词或短语，请忽略query中的模板，html标签，引用和url等无关信息，这些关键词将用于在embedding向量数据库中检索相关信息。每个关键词应该简洁、精确，并且从不同角度覆盖用户问题的核心要素。请直接列出这些关键词，每行一个，不要有编号或其他说明。用户问题: ${query}`;
 
       // 调用 DeepSeek R1 模型 API
       const response = await axios.post(
@@ -149,8 +149,12 @@ export class EmbeddingService {
     const chromaClient = new ChromaClient({
       path: url,
     });
+
     const collections = await chromaClient.listCollections();
     console.log(collections, 'collections1');
+    if (!collections.find((collection) => collection === collectionName)) {
+      return;
+    }
     // 删除整个collection
     await chromaClient.deleteCollection({
       name: collectionName,

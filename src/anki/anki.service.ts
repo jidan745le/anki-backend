@@ -52,12 +52,14 @@ export interface DeckStats {
 export interface NextCardResponse {
   card: UserCard | { message: 'all_done' } | null;
   stats: DeckStats;
+  allCards: UserCardSummary[];
 }
 
 interface UserCardSummary {
   uuid: string;
   state: CardState;
   dueDate: Date;
+  lastReviewDate: Date | null;
 }
 
 const isDevelopment = process.env.NODE_ENV === 'development';
@@ -260,22 +262,27 @@ export class AnkiService implements OnApplicationBootstrap {
     return `user:${userId}:deck:${deckId}:cards_summary`;
   }
 
+  // Redis缓存的默认过期时间（秒）
+  private CACHE_TTL = 3600; // 1小时
+
   private async refreshUserDeckCardsInRedis(
     userId: number,
     deckId: number,
   ): Promise<void> {
     const userCards = await this.userCardRepository.find({
       where: { user: { id: userId }, deck: { id: deckId } },
-      select: ['uuid', 'state', 'dueDate'],
+      select: ['uuid', 'state', 'dueDate', 'lastReviewDate'],
     });
     const summaries: UserCardSummary[] = userCards.map((uc) => ({
       uuid: uc.uuid,
       state: uc.state,
       dueDate: uc.dueDate,
+      lastReviewDate: uc.lastReviewDate,
     }));
     await this.redisClient.set(
       this.getDeckStatsCacheKey(userId, deckId),
       JSON.stringify(summaries),
+      { EX: this.CACHE_TTL }, // 设置过期时间
     );
   }
 
@@ -286,19 +293,30 @@ export class AnkiService implements OnApplicationBootstrap {
   ): Promise<void> {
     const cacheKey = this.getDeckStatsCacheKey(userId, deckId);
     const cachedData = await this.redisClient.get(cacheKey);
-    const summaries: UserCardSummary[] = cachedData
-      ? JSON.parse(cachedData)
-      : [];
+
+    // 如果缓存不存在，则从数据库重新加载
+    if (!cachedData) {
+      await this.refreshUserDeckCardsInRedis(userId, deckId);
+      return;
+    }
+
+    const summaries: UserCardSummary[] = JSON.parse(cachedData);
     const index = summaries.findIndex(
       (s) => s.uuid === updatedCardSummary.uuid,
     );
     if (index > -1) {
       summaries[index] = updatedCardSummary;
     } else {
-      // If for some reason it's not there, add it. Could happen if cache was cleared.
-      summaries.push(updatedCardSummary);
+      // 如果找不到卡片，可能是缓存与数据库不同步，重新获取整个列表
+      this.logger.warn(
+        `Card ${updatedCardSummary.uuid} not found in Redis cache, refreshing cache.`,
+      );
+      await this.refreshUserDeckCardsInRedis(userId, deckId);
+      return;
     }
-    await this.redisClient.set(cacheKey, JSON.stringify(summaries));
+    await this.redisClient.set(cacheKey, JSON.stringify(summaries), {
+      EX: this.CACHE_TTL,
+    });
   }
 
   private async addUserCardToRedis(
@@ -308,14 +326,21 @@ export class AnkiService implements OnApplicationBootstrap {
   ): Promise<void> {
     const cacheKey = this.getDeckStatsCacheKey(userId, deckId);
     const cachedData = await this.redisClient.get(cacheKey);
-    const summaries: UserCardSummary[] = cachedData
-      ? JSON.parse(cachedData)
-      : [];
-    // Avoid duplicates if this is called multiple times for the same new card
+
+    // 如果缓存不存在，则从数据库重新加载
+    if (!cachedData) {
+      await this.refreshUserDeckCardsInRedis(userId, deckId);
+      return;
+    }
+
+    const summaries: UserCardSummary[] = JSON.parse(cachedData);
+    // 避免重复添加相同的卡片
     if (!summaries.find((s) => s.uuid === newCardSummary.uuid)) {
       summaries.push(newCardSummary);
+      await this.redisClient.set(cacheKey, JSON.stringify(summaries), {
+        EX: this.CACHE_TTL,
+      });
     }
-    await this.redisClient.set(cacheKey, JSON.stringify(summaries));
   }
 
   private async calculateDeckStats(
@@ -324,17 +349,38 @@ export class AnkiService implements OnApplicationBootstrap {
   ): Promise<DeckStats> {
     const cacheKey = this.getDeckStatsCacheKey(userId, deckId);
     const cachedData = await this.redisClient.get(cacheKey);
-    const summaries: UserCardSummary[] = cachedData
-      ? JSON.parse(cachedData)
-      : [];
 
+    // 如果缓存不存在或已过期，则从数据库重新加载
+    if (!cachedData) {
+      await this.refreshUserDeckCardsInRedis(userId, deckId);
+      // 重新从Redis获取刚刚刷新的数据
+      const refreshedData = await this.redisClient.get(cacheKey);
+      if (!refreshedData) {
+        // 如果仍然无法获取，返回默认值
+        this.logger.error(
+          `Failed to refresh cache for user ${userId}, deck ${deckId}`,
+        );
+        return { newCount: 0, learningCount: 0, reviewCount: 0 };
+      }
+
+      // 继续计算统计信息，现在使用刷新后的数据
+      const summaries: UserCardSummary[] = JSON.parse(refreshedData);
+      return this.computeStatsFromSummaries(summaries);
+    }
+
+    const summaries: UserCardSummary[] = JSON.parse(cachedData);
+    return this.computeStatsFromSummaries(summaries);
+  }
+
+  // 从卡片摘要计算统计数据的辅助方法
+  private computeStatsFromSummaries(summaries: UserCardSummary[]): DeckStats {
     const now = new Date();
     let newCount = 0;
     let learningCount = 0;
     let reviewCount = 0;
 
     for (const summary of summaries) {
-      const dueDate = new Date(summary.dueDate); // Ensure dueDate is a Date object
+      const dueDate = new Date(summary.dueDate); // 确保dueDate是Date对象
       if (summary.state === CardState.NEW) {
         newCount++;
       } else if (
@@ -362,6 +408,13 @@ export class AnkiService implements OnApplicationBootstrap {
 
     const stats = await this.calculateDeckStats(userId, deckId);
 
+    // 获取所有卡片的摘要信息
+    const cacheKey = this.getDeckStatsCacheKey(userId, deckId);
+    const cachedDataRaw = await this.redisClient.get(cacheKey);
+    const allCards: UserCardSummary[] = cachedDataRaw
+      ? JSON.parse(cachedDataRaw)
+      : [];
+
     let nextCardToShow: UserCard | { message: 'all_done' } | null;
 
     if (order === LearnOrder.SEQUENTIAL) {
@@ -377,23 +430,74 @@ export class AnkiService implements OnApplicationBootstrap {
         | { message: 'all_done' }
         | null;
     }
-    return { card: nextCardToShow, stats };
+    return { card: nextCardToShow, stats, allCards };
   }
 
   private async getSequentialCard(deckId: number, userId: number) {
     const now = new Date();
 
-    const card = await this.userCardRepository
+    // 50%概率按顺序取新卡片
+    if (Math.random() < 0.5) {
+      const newCard = await this.userCardRepository
+        .createQueryBuilder('userCard')
+        .where('userCard.deck_id = :deckId', { deckId })
+        .andWhere('userCard.user_id = :userId', { userId })
+        .andWhere('userCard.state = :state', { state: CardState.NEW })
+        .orderBy('userCard.id', 'ASC') // 按ID顺序
+        .take(1)
+        .getOne();
+
+      if (newCard) {
+        return newCard;
+      }
+    }
+
+    // 没有新卡片或随机落入另外50%概率，按照以下逻辑获取卡片
+
+    // 1. 先查找过期时间最久的学习/重学卡片
+    const learningCard = await this.userCardRepository
       .createQueryBuilder('userCard')
       .where('userCard.deck_id = :deckId', { deckId })
       .andWhere('userCard.user_id = :userId', { userId })
-      .andWhere('userCard.dueDate   <= :now', { now })
-      .orderBy('userCard.id', 'ASC')
+      .andWhere('userCard.state IN (:...states)', {
+        states: [CardState.LEARNING, CardState.RELEARNING],
+      })
+      .andWhere('userCard.dueDate <= :now', { now })
+      .orderBy('userCard.dueDate', 'ASC') // 按到期时间升序（最早到期的优先）
       .take(1)
       .getOne();
 
-    if (card) {
-      return card;
+    if (learningCard) {
+      return learningCard;
+    }
+
+    // 2. 没有学习/重学卡片，再查找过期时间最久的复习卡片
+    const reviewCard = await this.userCardRepository
+      .createQueryBuilder('userCard')
+      .where('userCard.deck_id = :deckId', { deckId })
+      .andWhere('userCard.user_id = :userId', { userId })
+      .andWhere('userCard.state = :state', { state: CardState.REVIEW })
+      .andWhere('userCard.dueDate <= :now', { now })
+      .orderBy('userCard.dueDate', 'ASC') // 按到期时间升序（最早到期的优先）
+      .take(1)
+      .getOne();
+
+    if (reviewCard) {
+      return reviewCard;
+    }
+
+    // 3. 最后，如果没有可学习或复习的卡片，获取按ID排序的新卡片
+    const fallbackNewCard = await this.userCardRepository
+      .createQueryBuilder('userCard')
+      .where('userCard.deck_id = :deckId', { deckId })
+      .andWhere('userCard.user_id = :userId', { userId })
+      .andWhere('userCard.state = :state', { state: CardState.NEW })
+      .orderBy('userCard.id', 'ASC') // 按ID顺序获取
+      .take(1)
+      .getOne();
+
+    if (fallbackNewCard) {
+      return fallbackNewCard;
     } else {
       const hasCards = await this.userCardRepository
         .createQueryBuilder('userCard')
@@ -402,9 +506,10 @@ export class AnkiService implements OnApplicationBootstrap {
         .getCount();
 
       if (hasCards === 0) {
-        return null; // deck中没有卡片
+        return null; // 用户没有这个牌组的卡片
       } else {
-        return { message: 'all_done' }; // 目前已学完
+        //新的学完了 待学习的还没到期
+        return { message: 'all_done' }; // 所有卡片已经学习完成，暂时没有要复习的
       }
     }
   }
@@ -433,9 +538,10 @@ export class AnkiService implements OnApplicationBootstrap {
     if (reviewResult && reviewResult.card) {
       const updatedUserCard = reviewResult.card;
       await this.updateUserCardInRedis(userCard.user.id, userCard.deck.id, {
-        uuid: updatedUserCard.uuid, // Use uuid from the updated card
-        state: updatedUserCard.state, // Use state from the updated card
-        dueDate: updatedUserCard.dueDate, // Use dueDate from the updated card
+        uuid: updatedUserCard.uuid,
+        state: updatedUserCard.state,
+        dueDate: updatedUserCard.dueDate,
+        lastReviewDate: updatedUserCard.lastReviewDate,
       });
       return updatedUserCard; // Return the updated UserCard entity
     } else {
@@ -506,12 +612,15 @@ export class AnkiService implements OnApplicationBootstrap {
   }
 
   //创建deck ~~~~~~~~
-  async addDeck(createDeckDto: CreateDeckDto, userId: number): Promise<Deck> {
+  async addDeck(
+    createDeckDto: CreateDeckDto,
+    userId: number,
+  ): Promise<Deck & { user: any }> {
     const newDeck = new Deck();
     Object.assign(newDeck, createDeckDto);
     const deck = await this.deckRepository.save(newDeck);
     await this.userDeckService.assignDeckToUser(userId, deck.id);
-    return deck;
+    return { ...deck, user: { id: userId } } as Deck & { user: any };
   }
 
   async parseCardsFile(file: Express.Multer.File): Promise<Card[]> {
@@ -633,35 +742,44 @@ export class AnkiService implements OnApplicationBootstrap {
     },
   ): Promise<Card> {
     const { deckId, front, back, contentType, userId } = data;
-    let baseCard; // This seems to be potentially null if deck.creatorId !== userId or logic is removed
-    // const deck = await this.getDeck(deckId); // getDeck is already called implicitly or explicitly earlier if needed.
-    // If baseCard logic is removed, deck might not be needed here.
 
-    // Create user card (this part seems to be the core of creating a study item for the user)
+    // 创建并保存基础卡片
+    const baseCard = cardRepository.create({
+      deck: { id: deckId },
+      frontType: contentType || ContentType.TEXT,
+      front,
+      back,
+    });
+
+    // 保存基础卡片到cardRepository
+    const savedBaseCard = await cardRepository.save(baseCard);
+    this.logger.log(`Created base card ${savedBaseCard.id} for deck ${deckId}`);
+
+    // 创建用户卡片
     const userCardEntity = this.userCardRepository.create({
       user: { id: userId },
-      card: baseCard || null, // Link to base card if it exists
+      card: savedBaseCard, // 关联保存的基础卡片
       deck: { id: deckId },
       front: front,
       customBack: back,
-      // Note: frontType (for UserCard) is not explicitly set here, might take from baseCard or default
     });
 
     this.fsrsService.initializeUserCard(userCardEntity);
 
-    // Save user card
+    // 保存用户卡片
     const savedUserCard = await this.userCardRepository.save(userCardEntity);
 
-    // Add the new user card to Redis
+    // 将新卡片添加到Redis缓存
     if (savedUserCard) {
       await this.addUserCardToRedis(userId, deckId, {
         uuid: savedUserCard.uuid,
         state: savedUserCard.state,
         dueDate: savedUserCard.dueDate,
+        lastReviewDate: savedUserCard.lastReviewDate,
       });
     }
 
-    return baseCard; // Returns baseCard, but the user card is the one tracked for study
+    return savedBaseCard; // 返回保存的基础卡片
   }
 
   public createOSSClient() {
@@ -860,7 +978,7 @@ export class AnkiService implements OnApplicationBootstrap {
     file: Express.Multer.File,
     dto: CreatePodcastDeckDto,
     userId: number,
-    newDeck: Deck,
+    newDeck: Deck & { user: any },
   ): Promise<{ deck: Partial<Deck> & { stats: any }; cards: Card[] }> {
     try {
       //创建deck,先返回
@@ -874,7 +992,7 @@ export class AnkiService implements OnApplicationBootstrap {
         );
         const result = await this.processThisAmericanLife(
           dto,
-          newDeck,
+          newDeck as Deck & { user: any },
           (progress: number, status: string) => {
             this.websocketGateway.sendProgress(
               userId,
@@ -915,7 +1033,7 @@ export class AnkiService implements OnApplicationBootstrap {
 
   async beginAdvancedDeckWithAudioCreationTask(
     file: Express.Multer.File,
-    newDeck: Deck,
+    newDeck: Deck & { user: any },
   ): Promise<{ deck: Partial<Deck> & { stats: any }; cards: Card[] }> {
     try {
       // 1. 调用 Python 服务获取 transcript
@@ -925,9 +1043,9 @@ export class AnkiService implements OnApplicationBootstrap {
         new Blob([fs.readFileSync(file.path)]),
         file.originalname,
       );
-
+      console.log(newDeck, 'newDeck.taskId');
       formData.append('taskId', newDeck.taskId);
-      formData.append('userId', newDeck.users[0].id.toString());
+      formData.append('userId', newDeck.user.id.toString());
 
       const response = await axios
         .post(
@@ -949,7 +1067,7 @@ export class AnkiService implements OnApplicationBootstrap {
       const segments = response.data;
       console.log(segments, 'segments');
       this.websocketGateway.sendProgress(
-        newDeck.users[0].id,
+        newDeck.user.id,
         newDeck.taskId,
         68,
         'building vector store',
@@ -957,7 +1075,7 @@ export class AnkiService implements OnApplicationBootstrap {
       // 构建向量存储
       await this.embeddingService.buildVectorStore(segments, newDeck.id);
       this.websocketGateway.sendProgress(
-        newDeck.users[0].id,
+        newDeck.user.id,
         newDeck.taskId,
         70,
         'finished vector store',
@@ -982,7 +1100,7 @@ export class AnkiService implements OnApplicationBootstrap {
           : undefined;
 
         this.websocketGateway.sendProgress(
-          newDeck.users[0].id,
+          newDeck.user.id,
           newDeck.taskId,
           70 + Math.floor((i / totalSegments) * 20),
           `Processing segment ${i + 1} of ${totalSegments}`,
@@ -1002,7 +1120,7 @@ export class AnkiService implements OnApplicationBootstrap {
             originalName: ossFileName,
             contentType: ContentType.AUDIO,
           },
-          newDeck.users[0].id,
+          newDeck.user.id,
         );
 
         cards.push(card);
@@ -1020,10 +1138,16 @@ export class AnkiService implements OnApplicationBootstrap {
         status: DeckStatus.COMPLETED,
       });
       this.websocketGateway.sendProgress(
-        newDeck.users[0].id,
+        newDeck.user.id,
         newDeck.taskId,
         100,
         'Processing complete',
+      );
+
+      // Build vector store
+      await this.embeddingService.buildVectorStore(
+        cards.map((card) => ({ text: card.back, front: card.front })),
+        newDeck.id,
       );
 
       return { deck: { ...newDeck, stats: {} }, cards };
@@ -1034,10 +1158,11 @@ export class AnkiService implements OnApplicationBootstrap {
 
   private async processThisAmericanLife(
     dto: CreatePodcastDeckDto,
-    newDeck: Deck,
+    newDeck: Deck & { user: any },
     onProgress: (progress: number, status: string) => void,
   ): Promise<{ deck: Partial<Deck> & { stats: any }; cards: Card[] }> {
     const cards: Card[] = [];
+    const segmentsForVectorStore: any[] = []; // Initialize array for vector store segments
 
     onProgress(15, 'Launching browser');
     const browser = await puppeteer.launch({
@@ -1155,26 +1280,39 @@ export class AnkiService implements OnApplicationBootstrap {
               originalName: ossFileName,
               contentType: ContentType.AUDIO,
             },
-            newDeck.users[0].id,
+            newDeck.user.id,
           );
 
           cards.push(card);
 
+          // Prepare segment for vector store
+          const endTime =
+            duration !== undefined ? startTime + duration : undefined;
+          segmentsForVectorStore.push({
+            text: segment.text, // Use raw text for vector store
+            front: audioUrl, // Audio URL
+            speaker: segment.role, // Speaker information
+            start: startTime, // Start time
+            end: endTime, // End time
+          });
+
           processedSegments++;
         }
         fs.unlinkSync(filePath); // 删除临时文件
-        onProgress(90, 'Calculating statistics');
-        // const stats = await this.calculateStats(newDeck.id);
-        // await this.redisClient.set(
-        //   this.getStatsCacheKey(newDeck.id),
-        //   JSON.stringify(stats),
-        //   { EX: 300 },
-        // );
 
         // 更新状态为完成
         await this.deckRepository.update(newDeck.id, {
           status: DeckStatus.COMPLETED,
         });
+
+        onProgress(95, 'Building vector store');
+
+        // Build vector store
+        await this.embeddingService.buildVectorStore(
+          segmentsForVectorStore, // Use the new detailed segments array
+          newDeck.id,
+        );
+
         onProgress(100, 'Processing complete');
 
         return { deck: { ...newDeck, stats: {} }, cards };

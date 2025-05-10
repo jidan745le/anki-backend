@@ -43,7 +43,7 @@ export class AnkiController {
   @Get('getNextCard')
   async getNextCard(
     @Query('deckId') deckId: string,
-    @Query('order') order: LearnOrder = LearnOrder.RANDOM,
+    @Query('order') order: LearnOrder = LearnOrder.SEQUENTIAL,
     @Query('mount') mount = 'false',
     @Req() req,
   ) {
