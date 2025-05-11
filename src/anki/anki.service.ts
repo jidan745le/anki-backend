@@ -560,6 +560,7 @@ export class AnkiService implements OnApplicationBootstrap {
   //获取用户所有deck pending to be implemented
   async getDecks(userId: number) {
     const userDecks = await this.userDeckService.getUserDecks(userId);
+    // await this.embeddingService.vectorStoreLogger();
 
     const decksWithStats = await Promise.all(
       userDecks.map(async (userDeck) => {
@@ -617,7 +618,7 @@ export class AnkiService implements OnApplicationBootstrap {
     userId: number,
   ): Promise<Deck & { user: any }> {
     const newDeck = new Deck();
-    Object.assign(newDeck, createDeckDto);
+    Object.assign(newDeck, createDeckDto, { creatorId: userId });
     const deck = await this.deckRepository.save(newDeck);
     await this.userDeckService.assignDeckToUser(userId, deck.id);
     return { ...deck, user: { id: userId } } as Deck & { user: any };
@@ -742,18 +743,22 @@ export class AnkiService implements OnApplicationBootstrap {
     },
   ): Promise<Card> {
     const { deckId, front, back, contentType, userId } = data;
-
-    // 创建并保存基础卡片
-    const baseCard = cardRepository.create({
-      deck: { id: deckId },
-      frontType: contentType || ContentType.TEXT,
-      front,
-      back,
-    });
-
-    // 保存基础卡片到cardRepository
-    const savedBaseCard = await cardRepository.save(baseCard);
-    this.logger.log(`Created base card ${savedBaseCard.id} for deck ${deckId}`);
+    let baseCard: Card;
+    let savedBaseCard: Card | null = null;
+    const deck = await this.deckRepository.findOne({ where: { id: deckId } });
+    this.logger.log(userId, deck.creatorId, 'userId, deck.creatorId');
+    if (userId === deck.creatorId) {
+      baseCard = cardRepository.create({
+        deck: { id: deckId },
+        frontType: contentType || ContentType.TEXT,
+        front,
+        back,
+      });
+      savedBaseCard = await cardRepository.save(baseCard);
+      this.logger.log(
+        `Created base card ${savedBaseCard.id} for deck ${deckId}`,
+      );
+    }
 
     // 创建用户卡片
     const userCardEntity = this.userCardRepository.create({
@@ -777,6 +782,14 @@ export class AnkiService implements OnApplicationBootstrap {
         dueDate: savedUserCard.dueDate,
         lastReviewDate: savedUserCard.lastReviewDate,
       });
+    }
+
+    if (savedBaseCard) {
+      //本人卡
+      await this.embeddingService.addBaseCardToVectorStore(
+        savedBaseCard,
+        deckId,
+      );
     }
 
     return savedBaseCard; // 返回保存的基础卡片
@@ -1145,10 +1158,11 @@ export class AnkiService implements OnApplicationBootstrap {
       );
 
       // Build vector store
-      await this.embeddingService.buildVectorStore(
-        cards.map((card) => ({ text: card.back, front: card.front })),
-        newDeck.id,
-      );
+      // 不构建向量库，因为已经createcard构建过了
+      // await this.embeddingService.buildVectorStore(
+      //   cards.map((card) => ({ text: card.back, front: card.front })),
+      //   newDeck.id,
+      // );
 
       return { deck: { ...newDeck, stats: {} }, cards };
     } catch (error) {
@@ -1308,10 +1322,11 @@ export class AnkiService implements OnApplicationBootstrap {
         onProgress(95, 'Building vector store');
 
         // Build vector store
-        await this.embeddingService.buildVectorStore(
-          segmentsForVectorStore, // Use the new detailed segments array
-          newDeck.id,
-        );
+        // 不构建向量库，因为已经createcard构建过了
+        // await this.embeddingService.buildVectorStore(
+        //   segmentsForVectorStore, // Use the new detailed segments array
+        //   newDeck.id,
+        // );
 
         onProgress(100, 'Processing complete');
 

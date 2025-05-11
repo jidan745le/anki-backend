@@ -6,6 +6,7 @@ import axios from 'axios';
 import { ChromaClient } from 'chromadb';
 import { Document } from 'langchain/document';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
+import { Card } from 'src/anki/entities/card.entity';
 const isDevelopment = process.env.NODE_ENV === 'development';
 @Injectable()
 export class EmbeddingService {
@@ -13,6 +14,7 @@ export class EmbeddingService {
   private readonly logger = new Logger(EmbeddingService.name);
 
   async buildVectorStore(segments: any[], deckId: number) {
+    this.logger.log('buildVectorStore');
     try {
       // 构建文档
       const docs = segments.map((segment, index) => {
@@ -93,6 +95,36 @@ export class EmbeddingService {
     return date.toISOString().substr(11, 8);
   }
 
+  async addBaseCardToVectorStore(card: Card, deckId: number) {
+    const embeddings = new HuggingFaceTransformersEmbeddings({
+      model: 'nomic-ai/nomic-embed-text-v1',
+    });
+
+    let vectorStore = await Chroma.fromExistingCollection(embeddings, {
+      collectionName: `deck_${deckId}_vectors`,
+      url: !isDevelopment
+        ? 'http://vector-database:8000'
+        : 'http://127.0.0.1:8000',
+    });
+
+    if (!vectorStore) {
+      console.log('创建空向量库');
+      //创建空向量库
+      vectorStore = await Chroma.fromDocuments([], embeddings, {
+        collectionName: `deck_${deckId}_vectors`,
+        url: !isDevelopment
+          ? 'http://vector-database:8000'
+          : 'http://127.0.0.1:8000',
+      });
+    }
+
+    await vectorStore.addDocuments([
+      new Document({
+        pageContent: card.back,
+        metadata: { front: card.front },
+      }),
+    ]);
+  }
   // 生成搜索关键词
   async generateSearchKeywords(query: string): Promise<string[]> {
     try {
@@ -161,6 +193,19 @@ export class EmbeddingService {
     });
     const collections2 = await chromaClient.listCollections();
     console.log(collections2, 'collections2');
+  }
+
+  async vectorStoreLogger() {
+    const url = !isDevelopment
+      ? 'http://vector-database:8000'
+      : 'http://127.0.0.1:8000';
+
+    // 创建Chroma客户端
+    const chromaClient = new ChromaClient({
+      path: url,
+    });
+    const collections = await chromaClient.listCollections();
+    console.log(collections, 'collections111');
   }
 
   // 增强的相似内容搜索方法
