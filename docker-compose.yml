@@ -1,4 +1,9 @@
 version: '3.8'
+
+# 定义所有命名卷
+volumes:
+  chroma-data:          # ChromaDB向量数据库存储
+
 services:
   fe-app:
     image: fe-container:first
@@ -17,10 +22,12 @@ services:
     build:
       context: ./
       dockerfile: ./Dockerfile
+    restart: always
     depends_on:
+      - audio-processor
       - mysql-container
       - redis-container
-      - vector-database
+      - vector-database      
     # ports:
     #   - 3005:3000
     networks:
@@ -43,17 +50,17 @@ services:
   audio-processor:
     image: split-audio-audio-processor:first
     ports:
-      - "5000:5000"
+      - "8080:8080"
     volumes:
       - ./uploads:/app/uploads
-    depends_on:
-      - redis-container
     networks:
       - common-network
   vector-database:
     image: chromadb/chroma
     ports:
       - 8000:8000
+    volumes:
+      - chroma-data:/data
     networks:
       - common-network
 networks:
