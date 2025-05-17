@@ -4,13 +4,21 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { ChromaClient } from 'chromadb';
+import * as fs from 'fs';
 import { Document } from 'langchain/document';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
+import * as path from 'path';
 import { Card } from 'src/anki/entities/card.entity';
+import { Worker } from 'worker_threads';
+import { WebsocketGateway } from '../websocket/websocket.gateway';
+
 const isDevelopment = process.env.NODE_ENV === 'development';
 @Injectable()
 export class EmbeddingService {
-  constructor(private configService: ConfigService) {}
+  constructor(
+    private configService: ConfigService,
+    private readonly websocketGateway: WebsocketGateway,
+  ) {}
   private readonly logger = new Logger(EmbeddingService.name);
 
   async buildVectorStore(
@@ -19,119 +27,257 @@ export class EmbeddingService {
     batchSize = 20,
     chunkSize = 1000,
     chunkOverlap = 100,
-  ) {
-    this.logger.log('buildVectorStore with batching');
-    try {
-      // 构建文档
-      const docs = segments.map((segment, index) => {
-        const metadata = {
-          start: this.formatTime(segment.start),
-          end: this.formatTime(segment.end),
-          sequence: index + 1,
-          speaker: segment.speaker,
-          deckId: deckId,
-          front: segment.front,
+    userId?: number,
+    taskId?: string,
+  ): Promise<string | Chroma> {
+    // 如果提供了userId和taskId，使用Worker线程处理以避免阻塞主线程
+    if (userId && taskId) {
+      this.logger.log(
+        `Starting vector embedding for deck ${deckId} in worker thread`,
+      );
+
+      try {
+        // 检查参数
+        if (!segments || segments.length === 0) {
+          throw new Error('No segments provided for vector embedding');
+        }
+
+        // 创建Worker线程
+        // 根据环境确定正确的worker文件路径
+        let workerPath;
+        if (isDevelopment) {
+          // 开发模式下，使用项目根目录下的dist路径
+          workerPath = path.resolve(
+            process.cwd(),
+            'dist/embedding/embedding-worker.js',
+          );
+
+          // 确保worker文件存在
+          if (!fs.existsSync(workerPath)) {
+            this.logger.warn(
+              `Worker file not found at ${workerPath}, trying to compile it...`,
+            );
+            // 尝试编译worker文件
+            try {
+              const compileScript = path.resolve(
+                process.cwd(),
+                'compile-worker.js',
+              );
+              require(compileScript);
+              // 等待一会儿确保编译完成
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+
+              if (!fs.existsSync(workerPath)) {
+                throw new Error(
+                  `Worker file still not found after compilation attempt`,
+                );
+              }
+            } catch (compileError) {
+              this.logger.error(
+                `Failed to compile worker: ${compileError.message}`,
+              );
+              throw new Error(
+                `Worker file not found and compilation failed: ${compileError.message}`,
+              );
+            }
+          }
+        } else {
+          // 生产模式下，使用相对路径
+          workerPath = path.resolve(__dirname, 'embedding-worker.js');
+        }
+
+        this.logger.log(`Initializing worker at path: ${workerPath}`);
+
+        // 需要传递给Worker的数据
+        const workerData = {
+          segments,
+          deckId,
+          batchSize,
+          chunkSize,
+          chunkOverlap,
+          isDevelopment,
         };
 
-        const filteredMetadata = Object.fromEntries(
-          Object.entries(metadata).filter(([_, value]) => !!value),
-        );
+        // 启动Worker异步处理
+        const worker = new Worker(workerPath, { workerData });
 
-        return new Document({
-          pageContent: segment.text.trim(),
-          metadata: filteredMetadata,
+        // 处理Worker事件和消息
+        worker.on('message', (message) => {
+          if (message.type === 'progress') {
+            // 发送进度更新
+            this.websocketGateway.sendProgress(
+              userId,
+              taskId,
+              message.progress,
+              message.message,
+            );
+          } else if (message.type === 'log') {
+            // 记录日志
+            this.logger.log(`Worker: ${message.message}`);
+          } else if (message.type === 'error') {
+            // 记录错误
+            this.logger.error(`Worker error: ${message.error}`);
+
+            this.websocketGateway.sendProgress(
+              userId,
+              taskId,
+              100,
+              `向量嵌入失败: ${message.error}`,
+            );
+          } else if (message.type === 'complete') {
+            this.logger.log(`Vector embedding completed for deck ${deckId}`);
+
+            this.websocketGateway.sendProgress(
+              userId,
+              taskId,
+              100,
+              '向量嵌入处理完成',
+            );
+          }
         });
-      });
 
-      // 文本分割
-      const textSplitter = new RecursiveCharacterTextSplitter({
-        chunkSize,
-        chunkOverlap,
-      });
-      const splitDocs = await textSplitter.splitDocuments(docs);
+        worker.on('error', (error) => {
+          this.logger.error(`Worker error: ${error.message}`);
 
-      // 保存可序列化的文档
-      const serializableDocs = splitDocs.map((doc) => ({
-        pageContent: doc.pageContent,
-        metadata: doc.metadata,
-      }));
-      console.log(`Total docs to embed: ${serializableDocs.length}`);
+          this.websocketGateway.sendProgress(
+            userId,
+            taskId,
+            100,
+            `向量处理错误: ${error.message}`,
+          );
+        });
 
-      // 初始化 embeddings
-      const embeddings = new HuggingFaceTransformersEmbeddings({
-        model: 'nomic-ai/nomic-embed-text-v1',
-      });
+        worker.on('exit', (code) => {
+          if (code !== 0) {
+            this.logger.error(`Worker stopped with exit code ${code}`);
+          } else {
+            this.logger.log(`Worker completed successfully`);
+          }
+        });
 
-      // 分批处理文档
-      const collectionName = `deck_${deckId}_vectors`;
-      const url = !isDevelopment
-        ? 'http://vector-database:8000'
-        : 'http://127.0.0.1:8000';
+        // 立即返回，不等待Worker完成
+        return `Worker started for deck ${deckId}`;
+      } catch (error) {
+        this.logger.error(
+          `Failed to start vector embedding worker: ${error.message}`,
+        );
+        throw error;
+      }
+    } else {
+      // 同步处理方式（原有实现）
+      this.logger.log('buildVectorStore with batching');
+      try {
+        // 构建文档
+        const docs = segments.map((segment, index) => {
+          const metadata = {
+            start: this.formatTime(segment.start),
+            end: this.formatTime(segment.end),
+            sequence: index + 1,
+            speaker: segment.speaker,
+            deckId: deckId,
+            front: segment.front,
+          };
 
-      console.log('collectionName', collectionName);
+          const filteredMetadata = Object.fromEntries(
+            Object.entries(metadata).filter(([_, value]) => !!value),
+          );
 
-      // 创建或获取向量存储
-      let vectorStore: Chroma;
+          return new Document({
+            pageContent: segment.text.trim(),
+            metadata: filteredMetadata,
+          });
+        });
 
-      // 分批处理
-      const totalBatches = Math.ceil(splitDocs.length / batchSize);
-      this.logger.log(
-        `Processing ${totalBatches} batches with batch size ${batchSize}`,
-      );
+        // 文本分割
+        const textSplitter = new RecursiveCharacterTextSplitter({
+          chunkSize,
+          chunkOverlap,
+        });
+        const splitDocs = await textSplitter.splitDocuments(docs);
 
-      const chromaClient = new ChromaClient({
-        path: url,
-      });
+        // 保存可序列化的文档
+        const serializableDocs = splitDocs.map((doc) => ({
+          pageContent: doc.pageContent,
+          metadata: doc.metadata,
+        }));
+        console.log(`Total docs to embed: ${serializableDocs.length}`);
 
-      const collections = await chromaClient.listCollections();
-      const isExist = collections.find(
-        (collection) => collection === collectionName,
-      );
+        // 初始化 embeddings
+        const embeddings = new HuggingFaceTransformersEmbeddings({
+          model: 'nomic-ai/nomic-embed-text-v1',
+        });
 
-      for (let i = 0; i < splitDocs.length; i += batchSize) {
-        const batchDocs = splitDocs.slice(i, i + batchSize);
-        const batchNum = Math.floor(i / batchSize) + 1;
+        // 分批处理文档
+        const collectionName = `deck_${deckId}_vectors`;
+        const url = !isDevelopment
+          ? 'http://vector-database:8000'
+          : 'http://127.0.0.1:8000';
 
+        console.log('collectionName', collectionName);
+
+        // 创建或获取向量存储
+        let vectorStore: Chroma;
+
+        // 分批处理
+        const totalBatches = Math.ceil(splitDocs.length / batchSize);
         this.logger.log(
-          `Processing batch ${batchNum}/${totalBatches} (${batchDocs.length} docs)`,
+          `Processing ${totalBatches} batches with batch size ${batchSize}`,
         );
 
-        if (i === 0 && !isExist) {
-          // 首批创建新的集合
-          vectorStore = await Chroma.fromDocuments(batchDocs, embeddings, {
-            collectionName,
-            url,
-            collectionMetadata: {
-              'hnsw:space': 'cosine',
-              embedding_function: 'nomic-ai/nomic-embed-text-v1',
-              embedding_dimension: 768,
-            },
-          });
-        } else {
-          // 后续批次添加到现有集合
-          if (!vectorStore) {
-            vectorStore = await Chroma.fromExistingCollection(embeddings, {
+        const chromaClient = new ChromaClient({
+          path: url,
+        });
+
+        const collections = await chromaClient.listCollections();
+        const isExist = collections.find(
+          (collection) => collection === collectionName,
+        );
+
+        for (let i = 0; i < splitDocs.length; i += batchSize) {
+          const batchDocs = splitDocs.slice(i, i + batchSize);
+          const batchNum = Math.floor(i / batchSize) + 1;
+
+          this.logger.log(
+            `Processing batch ${batchNum}/${totalBatches} (${batchDocs.length} docs)`,
+          );
+
+          if (i === 0 && !isExist) {
+            // 首批创建新的集合
+            vectorStore = await Chroma.fromDocuments(batchDocs, embeddings, {
               collectionName,
               url,
+              collectionMetadata: {
+                'hnsw:space': 'cosine',
+                embedding_function: 'nomic-ai/nomic-embed-text-v1',
+                embedding_dimension: 768,
+              },
             });
+          } else {
+            // 后续批次添加到现有集合
+            if (!vectorStore) {
+              vectorStore = await Chroma.fromExistingCollection(embeddings, {
+                collectionName,
+                url,
+              });
+            }
+
+            await vectorStore.addDocuments(batchDocs);
           }
 
-          await vectorStore.addDocuments(batchDocs);
+          // 在批次之间添加短暂延迟，减轻负载压力
+          if (i + batchSize < splitDocs.length) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
         }
 
-        // 在批次之间添加短暂延迟，减轻负载压力
-        if (i + batchSize < splitDocs.length) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
+        this.logger.log(
+          `Successfully added all ${splitDocs.length} documents to vector store`,
+        );
+        return vectorStore;
+      } catch (error) {
+        this.logger.error(`Error building vector store: ${error.message}`);
+        throw error;
       }
-
-      this.logger.log(
-        `Successfully added all ${splitDocs.length} documents to vector store`,
-      );
-      return vectorStore;
-    } catch (error) {
-      this.logger.error(`Error building vector store: ${error.message}`);
-      throw error;
     }
   }
 
@@ -173,6 +319,7 @@ export class EmbeddingService {
       }),
     ]);
   }
+
   // 生成搜索关键词
   async generateSearchKeywords(query: string): Promise<string[]> {
     try {
@@ -210,72 +357,110 @@ export class EmbeddingService {
   }
 
   async deleteVectorStore(deckId: number) {
-    // const embeddings = new HuggingFaceTransformersEmbeddings({
-    //   model: 'nomic-ai/nomic-embed-text-v1',
-    // });
-    // const vectorStore = await Chroma.fromExistingCollection(embeddings, {
-    //   collectionName: `deck_${deckId}_vectors`,
-    //   url: !isDevelopment
-    //     ? 'http://vector-database:8000'
-    //     : 'http://127.0.0.1:8000',
-    // });
-    // await vectorStore.collection.delete({});
-    const collectionName = `deck_${deckId}_vectors`;
-    const url = !isDevelopment
-      ? 'http://vector-database:8000'
-      : 'http://127.0.0.1:8000';
+    try {
+      const collectionName = `deck_${deckId}_vectors`;
+      const url = !isDevelopment
+        ? 'http://vector-database:8000'
+        : 'http://127.0.0.1:8000';
 
-    // 创建Chroma客户端
-    const chromaClient = new ChromaClient({
-      path: url,
-    });
+      // 创建Chroma客户端
+      const chromaClient = new ChromaClient({
+        path: url,
+      });
 
-    const collections = await chromaClient.listCollections();
-    console.log(collections, 'collections1');
-    if (!collections.find((collection) => collection === collectionName)) {
-      return;
+      const collections = await chromaClient.listCollections();
+      this.logger.log(
+        `Available collections before deletion: ${collections.length}`,
+      );
+
+      // 检查集合是否存在
+      if (!collections.find((collection) => collection === collectionName)) {
+        this.logger.log(
+          `Collection ${collectionName} does not exist, nothing to delete.`,
+        );
+        return;
+      }
+
+      // 删除整个collection
+      await chromaClient.deleteCollection({
+        name: collectionName,
+      });
+
+      this.logger.log(`Successfully deleted collection ${collectionName}`);
+
+      // 验证删除结果
+      const collectionsAfter = await chromaClient.listCollections();
+      this.logger.log(
+        `Available collections after deletion: ${collectionsAfter.length}`,
+      );
+    } catch (error) {
+      this.logger.error(`Error deleting vector store: ${error.message}`);
+      throw error;
     }
-    // 删除整个collection
-    await chromaClient.deleteCollection({
-      name: collectionName,
-    });
-    const collections2 = await chromaClient.listCollections();
-    console.log(collections2, 'collections2');
   }
 
   async vectorStoreLogger() {
-    const url = !isDevelopment
-      ? 'http://vector-database:8000'
-      : 'http://127.0.0.1:8000';
+    try {
+      const url = !isDevelopment
+        ? 'http://vector-database:8000'
+        : 'http://127.0.0.1:8000';
 
-    // 创建Chroma客户端
-    const chromaClient = new ChromaClient({
-      path: url,
-    });
-    const collections = await chromaClient.listCollections();
-    console.log(collections, 'collections111');
+      // 创建Chroma客户端
+      const chromaClient = new ChromaClient({
+        path: url,
+      });
+
+      const collections = await chromaClient.listCollections();
+      this.logger.log(`Available collections: ${collections.length}`);
+
+      // 获取每个集合的详细信息
+      for (const collectionName of collections) {
+        try {
+          // 使用默认或空的嵌入函数
+          const collection = await chromaClient.getCollection({
+            name: collectionName,
+            embeddingFunction: {
+              generate: async (texts: string[]) =>
+                texts.map(() => new Array(768).fill(0)),
+            },
+          });
+
+          const count = await collection.count();
+          this.logger.log(`Collection ${collectionName}: ${count} items`);
+        } catch (err) {
+          this.logger.warn(
+            `Could not get details for collection ${collectionName}: ${err.message}`,
+          );
+        }
+      }
+
+      return collections;
+    } catch (error) {
+      this.logger.error(`Error logging vector store: ${error.message}`);
+      throw error;
+    }
   }
 
   // 增强的相似内容搜索方法
-  async searchSimilarContent(deckId: number, query: string) {
+  async searchSimilarContent(deckId: number, query: string, topK = 5) {
     try {
       const embeddings = new HuggingFaceTransformersEmbeddings({
         model: 'nomic-ai/nomic-embed-text-v1',
       });
-      console.log('collectionName', `deck_${deckId}_vectors`);
+
+      const collectionName = `deck_${deckId}_vectors`;
+      const url = !isDevelopment
+        ? 'http://vector-database:8000'
+        : 'http://127.0.0.1:8000';
+
+      this.logger.log(`Searching in collection: ${collectionName}`);
 
       const vectorStore = await Chroma.fromExistingCollection(embeddings, {
-        collectionName: `deck_${deckId}_vectors`,
-        url: !isDevelopment
-          ? 'http://vector-database:8000'
-          : 'http://127.0.0.1:8000',
+        collectionName,
+        url,
       });
 
-      // vectorStore.collection.delete()
-      // First embed the query text into a vector
-      // const queryVector = await embeddings.embedQuery(query);
-
-      const results = await vectorStore.similaritySearchWithScore(query, 5);
+      const results = await vectorStore.similaritySearchWithScore(query, topK);
       return results;
     } catch (error) {
       this.logger.error(`Error searching similar content: ${error.message}`);

@@ -129,13 +129,7 @@ export class AnkiController {
 
         // 异步处理卡片导入
         this.ankiService
-          .parseCardsFileAndAddToUserDeck(
-            file,
-            newDeck.id,
-            userId,
-            taskId,
-            1000,
-          )
+          .parseCardsFileAndAddToUserDeck(file, newDeck.id, userId, taskId)
           .catch((error) => {
             console.error(
               `Error processing cards for deck ${newDeck.id}:`,

@@ -22,7 +22,8 @@
     "migration:create": "npm run typeorm -- migration:create",
     "migration:generate": "npm run typeorm -- migration:generate -d ./src/data-source.ts",
     "migration:run": "npm run typeorm -- migration:run -d ./data-source.js",
-    "migration:revert": "npm run typeorm -- migration:revert -d ./src/data-source.ts"
+    "migration:revert": "npm run typeorm -- migration:revert -d ./src/data-source.ts",
+    "compile:worker": "node compile-worker.js"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.3.3",
