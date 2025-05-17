@@ -2,6 +2,7 @@ import { HuggingFaceTransformersEmbeddings } from '@langchain/community/embeddin
 import { Chroma } from '@langchain/community/vectorstores/chroma';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
 import axios from 'axios';
 import { ChromaClient } from 'chromadb';
 import * as fs from 'fs';
@@ -9,6 +10,8 @@ import { Document } from 'langchain/document';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import * as path from 'path';
 import { Card } from 'src/anki/entities/card.entity';
+import { Deck, DeckStatus } from 'src/anki/entities/deck.entity';
+import { Repository } from 'typeorm';
 import { Worker } from 'worker_threads';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 
@@ -18,6 +21,8 @@ export class EmbeddingService {
   constructor(
     private configService: ConfigService,
     private readonly websocketGateway: WebsocketGateway,
+    @InjectRepository(Deck)
+    private readonly deckRepository: Repository<Deck>,
   ) {}
   private readonly logger = new Logger(EmbeddingService.name);
 
@@ -102,7 +107,7 @@ export class EmbeddingService {
         const worker = new Worker(workerPath, { workerData });
 
         // 处理Worker事件和消息
-        worker.on('message', (message) => {
+        worker.on('message', async (message) => {
           if (message.type === 'progress') {
             // 发送进度更新
             this.websocketGateway.sendProgress(
@@ -126,7 +131,11 @@ export class EmbeddingService {
             );
           } else if (message.type === 'complete') {
             this.logger.log(`Vector embedding completed for deck ${deckId}`);
-
+            // 更新牌组状态
+            await this.deckRepository.update(
+              { id: deckId },
+              { status: DeckStatus.COMPLETED },
+            );
             this.websocketGateway.sendProgress(
               userId,
               taskId,

@@ -1414,17 +1414,9 @@ export class AnkiService implements OnApplicationBootstrap {
         `已解析 ${cards.length} 张卡片，开始加入牌组...`,
       );
 
-      const totalCards = cards.length;
-
       // 第三步：处理卡片和向量存储
       // 向 addCardsForUserDeckBatch 传递 taskId 使其能使用 Worker 异步处理向量存储
       await this.addCardsForUserDeckBatch(cards, deckId, userId, taskId);
-
-      // 更新牌组状态
-      await this.deckRepository.update(
-        { id: deckId },
-        { status: DeckStatus.COMPLETED },
-      );
 
       // 第四步：处理完成 - Worker 会在向量存储完成时发送100%进度
       this.logger.log(
@@ -1501,6 +1493,7 @@ export class AnkiService implements OnApplicationBootstrap {
 
     // 批量保存用户卡片
     const savedUserCards = await this.userCardRepository.save(userCards);
+    this.refreshUserDeckCardsInRedis(userId, deckId);
 
     // 构建向量存储，使用用户卡片内容
     const cardTexts = baseCards.map((card) => ({

@@ -153,12 +153,13 @@ async function buildVectorStore() {
 
     parentPort.postMessage({
       type: 'progress',
-      progress: 100,
+      progress: 98,
       message: `成功添加所有 ${splitDocs.length} 个文档到向量存储`,
     });
 
     // 完成处理，发送成功消息
     parentPort.postMessage({
+      progress: 100,
       type: 'complete',
       collectionName,
     });
