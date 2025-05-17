@@ -1188,10 +1188,14 @@ export class AnkiService implements OnApplicationBootstrap {
 
     onProgress(15, 'Launching browser');
     const browser = await puppeteer.launch({
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
       ],
       timeout: 60000,
       dumpio: true,
