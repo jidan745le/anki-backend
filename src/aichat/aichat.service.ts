@@ -99,8 +99,12 @@ export class AichatService {
         console.log('\n');
         console.log('content', content);
         console.log('\n');
+        const contentForKeywords = `${dto.contextContent}${
+          dto.selectionText ? `\n\n以及其中内容${dto.selectionText}` : ''
+        }${dto.question ? `\n\n以及问题${dto.question}` : ''}`;
+        console.log('contentForKeywords', contentForKeywords);
         const keywords = await this.embeddingService.generateSearchKeywords(
-          content,
+          contentForKeywords,
         );
         console.log('keywords', keywords);
         console.log('\n');

@@ -37,12 +37,12 @@ export function generatePrompt(
   switch (chatcontext) {
     case ChatContextType.Deck:
       contextPrompt = contextContent
-        ? '以下是当前学习牌组的内容作为上下文：\n\n' + contextContent + '\n\n'
+        ? '以下是当前学习deck的内容作为上下文：\n\n' + contextContent + '\n\n'
         : '';
       break;
     case ChatContextType.Card:
       contextPrompt = contextContent
-        ? '以下是当前卡片的内容作为上下文：\n\n' + contextContent + '\n\n'
+        ? '以下是当前card的内容作为上下文：\n\n' + contextContent + '\n\n'
         : '';
       break;
     case ChatContextType.None:
@@ -55,7 +55,7 @@ export function generatePrompt(
   const selectedContent =
     (chattype === ChatType.Explain || chattype === ChatType.Ask) &&
     selectionText
-      ? `用户选中的内容：${selectionText}\n\n`
+      ? `选中的内容：${selectionText}\n\n`
       : '';
 
   // 处理问题部分（只在 generic 或 ask 类型时使用）
@@ -77,7 +77,7 @@ export function generatePrompt(
       typePrompt = `基于${selectionText ? '选中的内容' : '上下文'}，请回答
 
 请提供全面而准确的回答，可以包括：
-- 主要概念的解释
+- 主要内容的解释
 - 相关例子或应用
 - 必要的背景知识
 - 关键点的强调
@@ -89,7 +89,7 @@ export function generatePrompt(
     default:
       typePrompt = `请提供帮助：
 
-请提供简洁明了的回答，根据问题需要可以包括解释、举例、比较或分析。回答应当直接针对问题核心，并与Anki学习卡片的上下文相关。`;
+请提供简洁明了的回答，根据问题需要可以包括解释、举例、比较或分析。`;
       break;
   }
 
@@ -132,7 +132,7 @@ export const generateSimplifiedPromptDisplay = (promptConfig: PromptConfig) => {
       typeDisplay = '回答';
       break;
     case ChatType.Generic:
-      typeDisplay = '帮助';
+      typeDisplay = '回答';
       break;
   }
 

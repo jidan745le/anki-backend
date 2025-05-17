@@ -13,8 +13,14 @@ export class EmbeddingService {
   constructor(private configService: ConfigService) {}
   private readonly logger = new Logger(EmbeddingService.name);
 
-  async buildVectorStore(segments: any[], deckId: number) {
-    this.logger.log('buildVectorStore');
+  async buildVectorStore(
+    segments: any[],
+    deckId: number,
+    batchSize = 20,
+    chunkSize = 1000,
+    chunkOverlap = 100,
+  ) {
+    this.logger.log('buildVectorStore with batching');
     try {
       // 构建文档
       const docs = segments.map((segment, index) => {
@@ -39,8 +45,8 @@ export class EmbeddingService {
 
       // 文本分割
       const textSplitter = new RecursiveCharacterTextSplitter({
-        chunkSize: 1000,
-        chunkOverlap: 100,
+        chunkSize,
+        chunkOverlap,
       });
       const splitDocs = await textSplitter.splitDocuments(docs);
 
@@ -49,37 +55,79 @@ export class EmbeddingService {
         pageContent: doc.pageContent,
         metadata: doc.metadata,
       }));
-      console.log(serializableDocs, 'serializableDocs');
-
-      // await fs.writeFile(
-      //   `embeddings/deck_${deckId}.json`,
-      //   JSON.stringify(serializableDocs, null, 2),
-      //   'utf-8',
-      // );
+      console.log(`Total docs to embed: ${serializableDocs.length}`);
 
       // 初始化 embeddings
       const embeddings = new HuggingFaceTransformersEmbeddings({
         model: 'nomic-ai/nomic-embed-text-v1',
       });
 
-      // 创建向量存储
-      // const persistDirectory = `chroma_db/deck_${deckId}`;
-      console.log('collectionName', `deck_${deckId}_vectors`);
-      const vectorStore = await Chroma.fromDocuments(splitDocs, embeddings, {
-        collectionName: `deck_${deckId}_vectors`,
-        url: !isDevelopment
-          ? 'http://vector-database:8000'
-          : 'http://127.0.0.1:8000',
-        collectionMetadata: {
-          'hnsw:space': 'cosine',
-          embedding_function: 'nomic-ai/nomic-embed-text-v1',
-          embedding_dimension: 768,
-        },
+      // 分批处理文档
+      const collectionName = `deck_${deckId}_vectors`;
+      const url = !isDevelopment
+        ? 'http://vector-database:8000'
+        : 'http://127.0.0.1:8000';
+
+      console.log('collectionName', collectionName);
+
+      // 创建或获取向量存储
+      let vectorStore: Chroma;
+
+      // 分批处理
+      const totalBatches = Math.ceil(splitDocs.length / batchSize);
+      this.logger.log(
+        `Processing ${totalBatches} batches with batch size ${batchSize}`,
+      );
+
+      const chromaClient = new ChromaClient({
+        path: url,
       });
 
-      // 持久化存储
-      // await vectorStore.persist();
+      const collections = await chromaClient.listCollections();
+      const isExist = collections.find(
+        (collection) => collection === collectionName,
+      );
 
+      for (let i = 0; i < splitDocs.length; i += batchSize) {
+        const batchDocs = splitDocs.slice(i, i + batchSize);
+        const batchNum = Math.floor(i / batchSize) + 1;
+
+        this.logger.log(
+          `Processing batch ${batchNum}/${totalBatches} (${batchDocs.length} docs)`,
+        );
+
+        if (i === 0 && !isExist) {
+          // 首批创建新的集合
+          vectorStore = await Chroma.fromDocuments(batchDocs, embeddings, {
+            collectionName,
+            url,
+            collectionMetadata: {
+              'hnsw:space': 'cosine',
+              embedding_function: 'nomic-ai/nomic-embed-text-v1',
+              embedding_dimension: 768,
+            },
+          });
+        } else {
+          // 后续批次添加到现有集合
+          if (!vectorStore) {
+            vectorStore = await Chroma.fromExistingCollection(embeddings, {
+              collectionName,
+              url,
+            });
+          }
+
+          await vectorStore.addDocuments(batchDocs);
+        }
+
+        // 在批次之间添加短暂延迟，减轻负载压力
+        if (i + batchSize < splitDocs.length) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+
+      this.logger.log(
+        `Successfully added all ${splitDocs.length} documents to vector store`,
+      );
       return vectorStore;
     } catch (error) {
       this.logger.error(`Error building vector store: ${error.message}`);
@@ -128,7 +176,7 @@ export class EmbeddingService {
   // 生成搜索关键词
   async generateSearchKeywords(query: string): Promise<string[]> {
     try {
-      const prompt = `生成4个精准的搜索关键词或短语，请忽略query中的模板，html标签，引用和url等无关信息，这些关键词将用于在embedding向量数据库中检索相关信息。每个关键词应该简洁、精确，并且从不同角度覆盖用户问题的核心要素。请直接列出这些关键词，每行一个，不要有编号或其他说明。用户问题: ${query}`;
+      const prompt = `根据query生成4个精准的搜索关键词或短语，请忽略query中的模板，html标签，引用和url等无关信息，这些关键词将用于在embedding向量数据库中检索相关信息。每个关键词应该简洁、精确，并且从不同角度覆盖用户问题的核心要素。请直接列出这些关键词，每行一个，不要有编号或其他说明。用户问题: ${query}`;
 
       // 调用 DeepSeek R1 模型 API
       const response = await axios.post(

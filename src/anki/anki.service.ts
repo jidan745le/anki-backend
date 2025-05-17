@@ -1378,4 +1378,160 @@ export class AnkiService implements OnApplicationBootstrap {
 
     return cards.filter((card) => card !== null);
   }
+
+  async parseCardsFileAndAddToUserDeck(
+    file: Express.Multer.File,
+    deckId: number,
+    userId: number,
+    taskId: string,
+    batchSize = 20,
+  ): Promise<void> {
+    try {
+      this.logger.log(
+        `Starting async card processing for deck ${deckId}, task ${taskId}`,
+      );
+
+      // 第一步：解析文件
+      this.websocketGateway.sendProgress(userId, taskId, 10, '正在解析文件...');
+      const cards = await this.parseCardsFile(file);
+
+      // 第二步：开始添加卡片
+      this.websocketGateway.sendProgress(
+        userId,
+        taskId,
+        30,
+        `已解析 ${cards.length} 张卡片，开始加入牌组...`,
+      );
+
+      // 添加卡片的批处理逻辑
+      const totalCards = cards.length;
+      let processedCards = 0;
+
+      // 分批处理卡片
+      for (let i = 0; i < totalCards; i += batchSize) {
+        const batch = cards.slice(i, i + batchSize);
+        await this.addCardsForUserDeckBatch(batch, deckId, userId);
+
+        // 更新进度
+        processedCards += batch.length;
+        const progress = 30 + Math.floor((processedCards / totalCards) * 60); // 从30%到90%的进度
+        this.websocketGateway.sendProgress(
+          userId,
+          taskId,
+          progress,
+          `处理中：${processedCards}/${totalCards} 张卡片已完成`,
+        );
+
+        // 每批处理间隔，减轻服务器压力
+        if (i + batchSize < totalCards) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+
+      // 更新牌组状态
+      await this.deckRepository.update(
+        { id: deckId },
+        { status: DeckStatus.COMPLETED },
+      );
+      await this.refreshUserDeckCardsInRedis(userId, deckId);
+
+      // 完成
+      this.websocketGateway.sendProgress(
+        userId,
+        taskId,
+        100,
+        `已完成：成功添加 ${totalCards} 张卡片`,
+      );
+
+      this.logger.log(
+        `Completed async card processing for deck ${deckId}, task ${taskId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error in parseCardsFileAndAddToUserDeck: ${error.message}`,
+      );
+
+      // 更新为失败状态
+      await this.deckRepository.update(
+        { id: deckId },
+        { status: DeckStatus.FAILED },
+      );
+
+      // 发送错误进度
+      this.websocketGateway.sendProgress(
+        userId,
+        taskId,
+        100,
+        `处理失败：${error.message}`,
+      );
+
+      // 重新抛出错误，让调用方可以捕获
+      throw error;
+    }
+  }
+
+  // 添加卡片批次处理方法
+  private async addCardsForUserDeckBatch(
+    cards: Card[],
+    deckId: number,
+    userId: number,
+  ): Promise<UserCard[]> {
+    // 查找牌组
+    const deck = await this.deckRepository.findOne({ where: { id: deckId } });
+    if (!deck) {
+      throw new NotFoundException(`Deck with ID ${deckId} not found`);
+    }
+
+    // 获取用户-牌组关系，主要是获取 FSRS 参数
+    const userDeck = await this.userDeckService.getUserDeck(userId, deckId);
+    if (!userDeck) {
+      throw new NotFoundException(`User-Deck relationship not found`);
+    }
+
+    // 为用户创建卡片学习记录
+    const userCards: UserCard[] = [];
+
+    const baseCardsToSave = cards.map((card) => {
+      return {
+        ...card,
+        deck,
+      };
+    });
+
+    const baseCards = await this.cardRepository.save(baseCardsToSave);
+
+    for (const card of baseCards) {
+      // 创建用户卡片
+      const userCard = this.userCardRepository.create({
+        user: { id: userId },
+        card,
+        deck,
+        front: card.front, // 从基础卡片复制内容
+        customBack: card.back,
+      });
+
+      this.fsrsService.initializeUserCard(userCard);
+      userCards.push(userCard);
+    }
+
+    // 批量保存用户卡片
+    const savedUserCards = await this.userCardRepository.save(userCards);
+
+    // 构建向量存储，使用用户卡片内容
+    const cardTexts = baseCards.map((card) => ({
+      text: card.back, // 使用基础卡片的背面内容
+      front: card.front,
+    }));
+
+    // 这里不需要等待向量存储完成，我们可以在后台处理
+    await this.embeddingService
+      .buildVectorStore(cardTexts, deckId, 20)
+      .catch((error) => {
+        this.logger.error(
+          `Error building vector store for batch: ${error.message}`,
+        );
+      });
+
+    return savedUserCards;
+  }
 }

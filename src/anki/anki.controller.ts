@@ -111,17 +111,47 @@ export class AnkiController {
       const userId: number = req?.user?.id;
       console.log('userId', userId);
 
-      const newDeck = await this.ankiService.addDeck(deck, userId);
+      const taskId = uuidv4();
+      const newDeck = await this.ankiService.addDeck(
+        {
+          ...deck,
+          taskId,
+          status: file ? DeckStatus.PROCESSING : DeckStatus.COMPLETED,
+        },
+        userId,
+      );
+
       if (file) {
-        const cards = await this.ankiService.parseCardsFile(file);
-        const insertedCards = await this.ankiService.addCardsForUserDeck(
-          cards,
-          newDeck.id,
-          userId,
-        );
+        // 发送初始化任务通知
+        setTimeout(() => {
+          this.websocketGateway.sendTaskInit(userId, taskId);
+        }, 1000);
+
+        // 异步处理卡片导入
+        this.ankiService
+          .parseCardsFileAndAddToUserDeck(
+            file,
+            newDeck.id,
+            userId,
+            taskId,
+            1000,
+          )
+          .catch((error) => {
+            console.error(
+              `Error processing cards for deck ${newDeck.id}:`,
+              error,
+            );
+          });
+
+        // 立即返回响应
+        return {
+          ...newDeck,
+          taskId,
+          message: 'Processing started',
+        };
       }
+
       return newDeck;
-      // return this.ankiService.addDeck(deck);
     } catch (e) {
       console.log(e);
       throw e;
