@@ -22,6 +22,7 @@ import {
 export class AichatService {
   private openai: OpenAI;
   private readonly logger = new Logger(AichatService.name);
+  private pendingRequests = new Map<string, Promise<any>>();
 
   constructor(
     @InjectRepository(ChatMessage)
@@ -37,6 +38,7 @@ export class AichatService {
     this.openai = new OpenAI({
       apiKey: this.configService.get('OPENAI_API_KEY'),
       baseURL: 'https://api.deepseek.com',
+      maxRetries: 0,
     });
   }
 
@@ -69,17 +71,56 @@ export class AichatService {
   }
 
   async createMessage(dto: CreateChatMessageDto) {
-    this.logger.log(`Creating message with dto: ${JSON.stringify(dto)}`);
+    this.logger.log(
+      `Attempting to create message with dto: ${JSON.stringify(dto)}`,
+    );
+
+    const idempotencyKey = `${dto.cardId || 'no-card'}-${
+      dto.chunkId || 'no-chunk'
+    }-${dto.chatcontext}-${dto.chattype}-${dto.selectionText || ''}-${
+      dto.question || ''
+    }-${dto.model}`;
+
+    if (this.pendingRequests.has(idempotencyKey)) {
+      this.logger.log(
+        `Request with key ${idempotencyKey} is already in progress. Returning existing promise.`,
+      );
+      return this.pendingRequests.get(idempotencyKey);
+    }
+
+    this.logger.log(`Processing new request with key ${idempotencyKey}.`);
+    const requestPromise = this._processCreateMessage(dto)
+      .catch((error) => {
+        // Ensure that if _processCreateMessage throws, the error is propagated
+        // and the key is still removed.
+        this.pendingRequests.delete(idempotencyKey);
+        this.logger.error(
+          `Error in processing request ${idempotencyKey}, removed from pending. Error: ${error.message}`,
+        );
+        throw error; // Re-throw the error to the caller
+      })
+      .finally(() => {
+        // Original finally might not be called if catch re-throws and isn't caught by caller of createMessage
+        // However, standard Promise behavior is that finally executes regardless of catch.
+        // To be safe, and ensure deletion on error path if not re-thrown and caught above.
+        if (this.pendingRequests.has(idempotencyKey)) {
+          this.pendingRequests.delete(idempotencyKey);
+          this.logger.log(
+            `Request with key ${idempotencyKey} finished (or errored and caught by caller) and removed from pending.`,
+          );
+        }
+      });
+
+    this.pendingRequests.set(idempotencyKey, requestPromise);
+    return requestPromise;
+  }
+
+  private async _processCreateMessage(dto: CreateChatMessageDto) {
+    this.logger.log(
+      `_processCreateMessage called with dto: ${JSON.stringify(dto)}`,
+    );
 
     try {
-      // let messages: ChatMessage[];
-      // if (dto.cardId) {
-      //   messages = await this.messageRepository.find({
-      //     where: { card: { uuid: dto.cardId }, chunkId: dto.chunkId },
-      //     order: { createdAt: 'DESC' },
-      //     take: 5,
-      //   });
-      // }
       const card = await this.userCardRepository.findOne({
         where: { uuid: dto.cardId },
         relations: ['deck'],
@@ -142,15 +183,6 @@ export class AichatService {
         );
       }
 
-      // const userMessage = queryRunner.manager.create(ChatMessage, {
-      //   chat,
-      //   content:
-      //     dto.mode === ContextMode.Global
-      //       ? getRetrievalUserPrompt(globalContext, dto.content)
-      //       : dto.content,
-      //   role: MessageRole.USER,
-      //   model: dto.model,
-      // });
       const userMessage = {
         role: MessageRole.USER,
         content:
@@ -234,7 +266,7 @@ export class AichatService {
         },
       };
     } catch (error) {
-      this.logger.error(`Error in createMessage: ${error.message}`);
+      this.logger.error(`Error in _processCreateMessage: ${error.message}`);
       throw error;
     }
   }
