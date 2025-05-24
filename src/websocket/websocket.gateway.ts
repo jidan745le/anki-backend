@@ -48,6 +48,12 @@ export class WebsocketGateway implements OnGatewayConnection {
       //查看当前房间几个connection
       const room = this.server.sockets.adapter.rooms.get(`user-${userId}`);
       Logger.log(`Current connections in room user-${userId}: ${room?.size}`);
+
+      // Send success message to client
+      client.emit('auth_success', {
+        message: 'Authentication successful',
+        userId: userId,
+      });
     } catch (error) {
       console.error('Authentication failed:', error.message);
       // client.emit('error', {
