@@ -252,12 +252,16 @@ export class AichatService {
 
     // 创建一个新的Subject用于状态观察
     const statusSubject = new Subject();
+    console.log('session', session);
 
     // 立即发送已有的内容
     if (session.content) {
-      statusSubject.next({
-        event: 'existing_content',
-        data: session.content,
+      console.log('session.content', session.content);
+      setTimeout(() => {
+        statusSubject.next({
+          event: 'existing_content',
+          data: session.content,
+        });
       });
     }
 
