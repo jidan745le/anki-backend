@@ -3,26 +3,45 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import OpenAI from 'openai';
 import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { Observable, Subject } from 'rxjs';
 import { Card } from 'src/anki/entities/card.entity';
 import { UserCard } from 'src/anki/entities/user-cards.entity';
 import { EmbeddingService } from 'src/embedding/embedding.service';
 import { DataSource, Repository } from 'typeorm';
+import { v4 as uuidv4 } from 'uuid';
 import {
   ChatContextType,
   CreateChatMessageDto,
 } from './dto/create-chat-message.dto';
-import { ChatMessage, MessageRole } from './entities/chat-message.entity';
+import {
+  AIModel,
+  ChatMessage,
+  MessageRole,
+} from './entities/chat-message.entity';
 import {
   generatePrompt,
   generateSimplifiedPromptDisplay,
   getRetrievalUserPrompt,
   getSystemPrompt,
 } from './utils/aichat.util';
+
 @Injectable()
 export class AichatService {
   private openai: OpenAI;
   private readonly logger = new Logger(AichatService.name);
   private pendingRequests = new Map<string, Promise<any>>();
+  private chatSessions = new Map<
+    string,
+    {
+      messages: ChatCompletionMessageParam[];
+      userMessage: any;
+      dto: CreateChatMessageDto;
+      cardId: number;
+      streamSubject: Subject<any>;
+      content: string;
+      responseComplete: boolean;
+    }
+  >();
 
   constructor(
     @InjectRepository(ChatMessage)
@@ -70,6 +89,330 @@ export class AichatService {
     };
   }
 
+  // 第一个接口：创建会话
+  async createChatSession(dto: CreateChatMessageDto) {
+    this.logger.log(`Creating chat session with dto: ${JSON.stringify(dto)}`);
+
+    try {
+      const card = await this.userCardRepository.findOne({
+        where: { uuid: dto.cardId },
+        relations: ['deck'],
+      });
+      const cardId = card.id;
+      const deckId = card.deck.id;
+      let content: string;
+      let globalContext: string;
+
+      if (dto.chatcontext === ChatContextType.Deck) {
+        content = generatePrompt(
+          dto.chatcontext,
+          dto.contextContent,
+          dto.chattype,
+          dto.selectionText,
+          dto.question,
+        );
+
+        const contentForKeywords = `${dto.contextContent}${
+          dto.selectionText ? `\n\n以及其中内容${dto.selectionText}` : ''
+        }${dto.question ? `\n\n以及问题${dto.question}` : ''}`;
+
+        const keywords = await this.embeddingService.generateSearchKeywords(
+          contentForKeywords,
+        );
+
+        const globalContextSet = new Set<string>();
+        await Promise.all(
+          keywords.map((keyword) =>
+            this.embeddingService
+              .searchSimilarContent(deckId, keyword)
+              .then((similarContentWithScores) => {
+                similarContentWithScores.forEach((result) => {
+                  globalContextSet.add(result[0].pageContent);
+                });
+              }),
+          ),
+        );
+        globalContext = Array.from(globalContextSet).join('\n');
+      } else {
+        content = generatePrompt(
+          dto.chatcontext,
+          dto.contextContent,
+          dto.chattype,
+          dto.selectionText,
+          dto.question,
+        );
+      }
+
+      const userMessage = {
+        role: MessageRole.USER,
+        content:
+          dto.chatcontext === ChatContextType.Deck
+            ? getRetrievalUserPrompt(globalContext, content)
+            : content,
+      };
+
+      let history: ChatMessage[] = [];
+      const whereCondition: any = { userCard: { id: cardId } };
+
+      if (dto.chunkId) {
+        whereCondition.chunkId = dto.chunkId;
+      }
+
+      history = await this.messageRepository.find({
+        where: whereCondition,
+        order: { createdAt: 'DESC' },
+        take: 5,
+      });
+
+      const messages: ChatCompletionMessageParam[] = [
+        {
+          role: 'system',
+          content: getSystemPrompt(card.deck.deckType),
+        },
+        ...history.reverse().map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+        })),
+        userMessage,
+      ];
+
+      // 创建一个唯一的会话ID
+      const sessionId = uuidv4();
+
+      // 立即插入user和assistant消息到数据库
+      const entities = [
+        this.messageRepository.create({
+          userCard: { id: cardId },
+          chunkId: dto.chunkId || null,
+          content: userMessage.content,
+          role: MessageRole.USER,
+          prompt_config: {
+            chatcontext: dto.chatcontext,
+            contextContent: dto.contextContent,
+            chattype: dto.chattype,
+            selectionText: dto.selectionText,
+            question: dto.question,
+          },
+          model: dto.model,
+        }),
+        this.messageRepository.create({
+          userCard: { id: cardId },
+          chunkId: dto.chunkId || null,
+          content: '', // 空内容，等待流式填充
+          role: MessageRole.ASSISTANT,
+          model: dto.model,
+          sessionId: sessionId, // 设置sessionId
+        }),
+      ];
+
+      await this.messageRepository.save(entities);
+
+      // 创建一个Subject用于流式传输
+      const streamSubject = new Subject();
+
+      // 存储会话信息
+      this.chatSessions.set(sessionId, {
+        messages,
+        userMessage,
+        dto,
+        cardId,
+        streamSubject,
+        content: '',
+        responseComplete: false,
+      });
+
+      return { sessionId };
+    } catch (error) {
+      this.logger.error(`Error creating chat session: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // 第二个接口：SSE流式传输
+  getChatStream(sessionId: string): Observable<any> {
+    const session = this.chatSessions.get(sessionId);
+
+    if (!session) {
+      throw new Error(`Session with ID ${sessionId} not found`);
+    }
+
+    // 开始流式处理
+    this.startStreaming(sessionId);
+
+    return session.streamSubject.asObservable();
+  }
+
+  // 第三个接口：观察现有会话的流式状态
+  getSessionStatus(sessionId: string): Observable<any> {
+    const session = this.chatSessions.get(sessionId);
+
+    if (!session) {
+      throw new Error(`Session with ID ${sessionId} not found`);
+    }
+
+    // 创建一个新的Subject用于状态观察
+    const statusSubject = new Subject();
+
+    // 立即发送已有的内容
+    if (session.content) {
+      statusSubject.next({
+        event: 'existing_content',
+        data: session.content,
+      });
+    }
+
+    // 如果响应已完成，发送完成事件
+    if (session.responseComplete) {
+      statusSubject.next({
+        event: 'complete',
+        data: JSON.stringify({
+          complete: true,
+          content: session.content,
+        }),
+      });
+      statusSubject.complete();
+      return statusSubject.asObservable();
+    }
+
+    // 订阅原始流，转发新的内容
+    const subscription = session.streamSubject.subscribe({
+      next: (data) => {
+        // 只转发新的消息内容和完成事件，不重复发送已有内容
+        if (data.event === 'message' || data.event === 'complete') {
+          statusSubject.next(data);
+        }
+      },
+      complete: () => {
+        statusSubject.complete();
+      },
+      error: (error) => {
+        statusSubject.error(error);
+      },
+    });
+
+    // 返回状态观察流
+    return statusSubject.asObservable();
+  }
+
+  private async startStreaming(sessionId: string) {
+    const session = this.chatSessions.get(sessionId);
+
+    if (!session) {
+      return;
+    }
+
+    try {
+      const stream = await this.openai.chat.completions.create({
+        model: session.dto.model,
+        temperature: 0.7,
+        messages: session.messages as ChatCompletionMessageParam[],
+        stream: true,
+      });
+
+      let promptTokens = 0;
+      let completionTokens = 0;
+
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        if (content) {
+          session.content += content;
+          session.streamSubject.next({
+            event: 'message',
+            data: content,
+          });
+        }
+
+        // 更新token计数
+        if (chunk.usage) {
+          promptTokens = chunk.usage.prompt_tokens;
+          completionTokens = chunk.usage.completion_tokens;
+        }
+      }
+
+      // 流结束，发送完成事件
+      session.responseComplete = true;
+      session.streamSubject.next({
+        event: 'complete',
+        data: JSON.stringify({
+          complete: true,
+          content: session.content,
+        }),
+      });
+
+      // 更新数据库中的assistant消息
+      await this.updateAssistantMessage(
+        sessionId,
+        session.content,
+        promptTokens,
+        completionTokens,
+      );
+
+      session.streamSubject.complete();
+    } catch (error) {
+      this.logger.error(`Error in streaming: ${error.message}`);
+      session.streamSubject.error(error);
+    } finally {
+      // 流结束后清理会话
+      setTimeout(() => {
+        this.chatSessions.delete(sessionId);
+      }, 5000); // 延迟5秒删除，确保客户端有时间接收所有消息
+    }
+  }
+
+  private async saveMessages(
+    sessionId: string,
+    cardId: number,
+    chunkId: string | null,
+    userContent: string,
+    assistantContent: string,
+    model: string,
+    promptTokens?: number,
+    completionTokens?: number,
+  ) {
+    const session = this.chatSessions.get(sessionId);
+    if (!session) return;
+
+    try {
+      const entities = [
+        this.messageRepository.create({
+          userCard: { id: cardId },
+          chunkId: chunkId,
+          content: userContent,
+          role: MessageRole.USER,
+          prompt_config: session.dto
+            ? {
+                chatcontext: session.dto.chatcontext,
+                contextContent: session.dto.contextContent,
+                chattype: session.dto.chattype,
+                selectionText: session.dto.selectionText,
+                question: session.dto.question,
+              }
+            : null,
+          model: model as AIModel,
+        }),
+        this.messageRepository.create({
+          userCard: { id: cardId },
+          chunkId: chunkId,
+          content: assistantContent,
+          role: MessageRole.ASSISTANT,
+          model: model as AIModel,
+          promptTokens: promptTokens,
+          completionTokens: completionTokens,
+          totalTokens:
+            promptTokens && completionTokens
+              ? promptTokens + completionTokens
+              : undefined,
+        }),
+      ];
+
+      await this.messageRepository.save(entities);
+      this.logger.log(`Messages saved for session ${sessionId}`);
+    } catch (error) {
+      this.logger.error(`Error saving messages: ${error.message}`);
+    }
+  }
+
+  // 保留原来的方法用于向后兼容
   async createMessage(dto: CreateChatMessageDto) {
     this.logger.log(
       `Attempting to create message with dto: ${JSON.stringify(dto)}`,
@@ -268,6 +611,40 @@ export class AichatService {
     } catch (error) {
       this.logger.error(`Error in _processCreateMessage: ${error.message}`);
       throw error;
+    }
+  }
+
+  private async updateAssistantMessage(
+    sessionId: string,
+    content: string,
+    promptTokens: number,
+    completionTokens: number,
+  ) {
+    try {
+      // 查找具有该sessionId的assistant消息
+      const assistantMessage = await this.messageRepository.findOne({
+        where: {
+          sessionId: sessionId,
+          role: MessageRole.ASSISTANT,
+        },
+      });
+
+      if (assistantMessage) {
+        // 更新消息内容和token信息，并清除sessionId
+        assistantMessage.content = content;
+        assistantMessage.promptTokens = promptTokens;
+        assistantMessage.completionTokens = completionTokens;
+        assistantMessage.totalTokens =
+          promptTokens && completionTokens
+            ? promptTokens + completionTokens
+            : undefined;
+        assistantMessage.sessionId = null; // 清除sessionId
+
+        await this.messageRepository.save(assistantMessage);
+        this.logger.log(`Assistant message updated for session ${sessionId}`);
+      }
+    } catch (error) {
+      this.logger.error(`Error updating assistant message: ${error.message}`);
     }
   }
 }

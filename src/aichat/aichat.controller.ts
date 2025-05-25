@@ -5,9 +5,12 @@ import {
   Param,
   Post,
   Query,
+  Sse,
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { Public } from '../decorators/public.decorator';
 import { LoginGuard } from '../login.guard';
 import { AichatService } from './aichat.service';
 import { CreateChatMessageDto } from './dto/create-chat-message.dto';
@@ -31,5 +34,31 @@ export class AichatController {
     createMessageDto: CreateChatMessageDto,
   ) {
     return this.aichatService.createMessage(createMessageDto);
+  }
+
+  @Post('initSession')
+  async createChatSession(
+    @Body(new ValidationPipe({ transform: true }))
+    createMessageDto: CreateChatMessageDto,
+  ) {
+    return this.aichatService.createChatSession(createMessageDto);
+  }
+
+  @Public()
+  @Sse('stream/:sessionId')
+  streamChat(
+    @Param('sessionId') sessionId: string,
+    @Query('token') token: string,
+  ): Observable<any> {
+    return this.aichatService.getChatStream(sessionId);
+  }
+
+  @Public()
+  @Sse('status/:sessionId')
+  getSessionStatus(
+    @Param('sessionId') sessionId: string,
+    @Query('token') token: string,
+  ): Observable<any> {
+    return this.aichatService.getSessionStatus(sessionId);
   }
 }

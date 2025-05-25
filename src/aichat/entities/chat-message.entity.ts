@@ -37,6 +37,7 @@ export interface PromptConfig {
 
 @Entity('chat_messages')
 @Index(['userCard', 'createdAt'])
+@Index(['sessionId'])
 export class ChatMessage {
   @PrimaryGeneratedColumn()
   id: number;
@@ -80,6 +81,9 @@ export class ChatMessage {
 
   @Column('int', { nullable: true })
   totalTokens: number;
+
+  @Column('varchar', { length: 36, nullable: true })
+  sessionId: string;
 
   @ManyToOne(() => UserCard, (userCard) => userCard.messages, {
     onDelete: 'CASCADE',
