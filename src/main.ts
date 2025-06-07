@@ -2,7 +2,25 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 
+// 添加全局垃圾回收类型声明
+declare global {
+  interface NodeJS {
+    global: {
+      gc?: () => void;
+    };
+  }
+}
+
 async function bootstrap() {
+  // 启用垃圾回收（需要使用 --expose-gc 启动参数）
+  if (process.execArgv.includes('--expose-gc')) {
+    console.log('手动垃圾回收功能已启用');
+  } else {
+    console.warn(
+      '未启用手动垃圾回收。建议使用 --expose-gc 启动参数以优化大型APKG导入',
+    );
+  }
+
   const app = await NestFactory.create(AppModule);
   const config = new DocumentBuilder()
     .setTitle('Test example')

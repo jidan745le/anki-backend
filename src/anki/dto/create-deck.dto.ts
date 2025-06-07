@@ -1,11 +1,8 @@
 import {
-  IsEnum,
+  IsBoolean,
   IsNotEmpty,
   IsOptional,
   IsString,
-  IsInt,
-  IsBoolean,
-  IsDecimal,
   MaxLength,
 } from 'class-validator';
 import { DeckStatus, DeckType } from '../entities/deck.entity';
@@ -28,6 +25,10 @@ export class CreateDeckDto {
 
   @IsOptional()
   taskId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  useEmbedding?: boolean;
 
   //   user: number; // 用户 ID
 }

@@ -26,6 +26,25 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+## Features
+
+### Anki Integration
+
+This project includes functionality to import Anki deck files (.apkg) and convert them into learning cards:
+
+- File format detection: The system automatically detects .apkg and .txt files
+- Template preservation: Maintains Anki card templates and formatting
+- WebSocket progress updates: Real-time feedback during import process
+- HTML sanitization: Ensures imported content is safe
+
+To import an Anki deck:
+1. Send a POST request to `/anki/addDeck` with a file upload
+2. The system will automatically detect the file type (.apkg or .txt)
+3. Progress updates are sent via WebSocket
+4. Cards are created with their original templates and styling
+
+The implementation uses the `anki-apkg-parser` library to extract and process Anki deck files.
+
 ## Installation
 
 ```bash

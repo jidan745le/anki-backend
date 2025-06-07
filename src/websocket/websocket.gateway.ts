@@ -94,6 +94,7 @@ export class WebsocketGateway implements OnGatewayConnection {
   }
 
   sendTaskInit(userId: number, taskId: string) {
+    console.log('sendTaskInit', userId, taskId);
     // 发送初始化任务
     this.server.to(`user-${userId}`).emit(`task-init`, {
       taskId,

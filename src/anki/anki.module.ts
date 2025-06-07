@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EmbeddingService } from '../embedding/embedding.service';
+import { AnkiApkgService } from './anki-apkg.service';
 import { AnkiController } from './anki.controller';
 import { AnkiService } from './anki.service';
 import { Card } from './entities/card.entity';
@@ -16,7 +17,13 @@ import { UserDeckService } from './user-deck.service';
     TypeOrmModule.forFeature([Card, Deck, DeckSettings, UserDeck, UserCard]),
   ],
   controllers: [AnkiController],
-  providers: [AnkiService, UserDeckService, EmbeddingService, FSRSService],
-  exports: [AnkiService, UserDeckService, FSRSService],
+  providers: [
+    AnkiService,
+    UserDeckService,
+    EmbeddingService,
+    FSRSService,
+    AnkiApkgService,
+  ],
+  exports: [AnkiService, UserDeckService, FSRSService, AnkiApkgService],
 })
 export class AnkiModule {}

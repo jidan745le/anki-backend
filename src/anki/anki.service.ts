@@ -700,26 +700,26 @@ export class AnkiService implements OnApplicationBootstrap {
     // 批量保存用户卡片
     const savedUserCards = await this.userCardRepository.save(userCards);
 
-    // 异步触发向量存储构建 - 不等待完成
-    const cardTexts = baseCards.map((card) => ({
-      text: card.back,
-      front: card.front,
-    }));
+    // // 异步触发向量存储构建 - 不等待完成
+    // const cardTexts = baseCards.map((card) => ({
+    //   text: card.back,
+    //   front: card.front,
+    // }));
 
-    setImmediate(async () => {
-      try {
-        this.logger.log(
-          `Triggering async vector store building for deck ${deckId}`,
-        );
-        await this.embeddingService.buildVectorStore(cardTexts, deckId);
-      } catch (error) {
-        this.logger.error(
-          `Error in async vector store building: ${error.message}`,
-        );
-      }
-    });
+    // setImmediate(async () => {
+    //   try {
+    //     this.logger.log(
+    //       `Triggering async vector store building for deck ${deckId}`,
+    //     );
+    //     await this.embeddingService.buildVectorStore(cardTexts, deckId);
+    //   } catch (error) {
+    //     this.logger.error(
+    //       `Error in async vector store building: ${error.message}`,
+    //     );
+    //   }
+    // });
 
-    // Refresh Redis cache after adding new cards
+    // // Refresh Redis cache after adding new cards
     await this.refreshUserDeckCardsInRedis(userId, deckId);
 
     return savedUserCards;
@@ -1400,11 +1400,17 @@ export class AnkiService implements OnApplicationBootstrap {
     deckId: number,
     userId: number,
     taskId: string,
+    useEmbedding?: boolean,
   ): Promise<void> {
     try {
       this.logger.log(
         `Starting async card processing for deck ${deckId}, task ${taskId}`,
       );
+      if (useEmbedding) {
+        setTimeout(() => {
+          this.websocketGateway.sendTaskInit(userId, taskId);
+        }, 1000);
+      }
 
       // 第一步：解析文件
       this.websocketGateway.sendProgress(userId, taskId, 10, '正在解析文件...');
@@ -1420,7 +1426,13 @@ export class AnkiService implements OnApplicationBootstrap {
 
       // 第三步：处理卡片和向量存储
       // 向 addCardsForUserDeckBatch 传递 taskId 使其能使用 Worker 异步处理向量存储
-      await this.addCardsForUserDeckBatch(cards, deckId, userId, taskId);
+      await this.addCardsForUserDeckBatch(
+        cards,
+        deckId,
+        userId,
+        taskId,
+        useEmbedding,
+      );
 
       // 第四步：处理完成 - Worker 会在向量存储完成时发送100%进度
       this.logger.log(
@@ -1456,6 +1468,7 @@ export class AnkiService implements OnApplicationBootstrap {
     deckId: number,
     userId: number,
     taskId?: string,
+    useEmbedding?: boolean,
   ): Promise<UserCard[]> {
     // 查找牌组
     const deck = await this.deckRepository.findOne({ where: { id: deckId } });
@@ -1505,23 +1518,27 @@ export class AnkiService implements OnApplicationBootstrap {
       front: card.front,
     }));
 
-    // 如果提供了taskId，使用Worker模式异步处理，否则使用同步模式
-    if (taskId) {
-      // 使用Worker模式 - 传递userId和taskId使其在Worker线程中处理
-      await this.embeddingService
-        .buildVectorStore(cardTexts, deckId, 20, 1000, 100, userId, taskId)
-        .catch((error) => {
-          this.logger.error(
-            `Error building vector store using worker: ${error.message}`,
-          );
-        });
+    if (useEmbedding) {
+      // 如果提供了taskId，使用Worker模式异步处理，否则使用同步模式
+      if (taskId) {
+        // 使用Worker模式 - 传递userId和taskId使其在Worker线程中处理
+        await this.embeddingService
+          .buildVectorStore(cardTexts, deckId, 20, 1000, 100, userId, taskId)
+          .catch((error) => {
+            this.logger.error(
+              `Error building vector store using worker: ${error.message}`,
+            );
+          });
+      } else {
+        // 使用原有同步模式
+        await this.embeddingService
+          .buildVectorStore(cardTexts, deckId, 20)
+          .catch((error) => {
+            this.logger.error(`Error building vector store: ${error.message}`);
+          });
+      }
     } else {
-      // 使用原有同步模式
-      await this.embeddingService
-        .buildVectorStore(cardTexts, deckId, 20)
-        .catch((error) => {
-          this.logger.error(`Error building vector store: ${error.message}`);
-        });
+      this.websocketGateway.sendProgress(userId, taskId, 100, '卡片插入完成');
     }
 
     return savedUserCards;

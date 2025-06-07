@@ -26,6 +26,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { v4 as uuidv4 } from 'uuid';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
+import { AnkiApkgService } from './anki-apkg.service';
 import { CreatePodcastDeckDto } from './dto/create-podcast-deck.dto';
 import { AssignDeckDto } from './dto/user-deck.dto';
 import { DeckStatus, DeckType } from './entities/deck.entity';
@@ -38,6 +39,7 @@ export class AnkiController {
     private readonly ankiService: AnkiService,
     private readonly websocketGateway: WebsocketGateway,
     private readonly userDeckService: UserDeckService,
+    private readonly ankiApkgService: AnkiApkgService,
   ) {}
 
   @Get('getNextCard')
@@ -110,6 +112,7 @@ export class AnkiController {
       console.log('deck', deck);
       const userId: number = req?.user?.id;
       console.log('userId', userId);
+      const useEmbedding = deck.useEmbedding;
 
       const taskId = uuidv4();
       const newDeck = await this.ankiService.addDeck(
@@ -123,26 +126,38 @@ export class AnkiController {
 
       if (file) {
         // 发送初始化任务通知
-        setTimeout(() => {
-          this.websocketGateway.sendTaskInit(userId, taskId);
-        }, 1000);
+        console.log('file', file);
+        if (file.originalname.endsWith('.apkg')) {
+          // 异步处理卡片导入
+          return await this.ankiApkgService.processApkgFile(
+            file,
+            newDeck,
+            userId,
+          );
+        } else if (file.originalname.endsWith('.txt')) {
+          // 异步处理卡片导入
+          this.ankiService
+            .parseCardsFileAndAddToUserDeck(
+              file,
+              newDeck.id,
+              userId,
+              taskId,
+              useEmbedding,
+            )
+            .catch((error) => {
+              console.error(
+                `Error processing cards for deck ${newDeck.id}:`,
+                error,
+              );
+            });
 
-        // 异步处理卡片导入
-        this.ankiService
-          .parseCardsFileAndAddToUserDeck(file, newDeck.id, userId, taskId)
-          .catch((error) => {
-            console.error(
-              `Error processing cards for deck ${newDeck.id}:`,
-              error,
-            );
-          });
-
-        // 立即返回响应
-        return {
-          ...newDeck,
-          taskId,
-          message: 'Processing started',
-        };
+          // 立即返回响应
+          return {
+            ...newDeck,
+            taskId,
+            message: 'Processing started',
+          };
+        }
       }
 
       return newDeck;
