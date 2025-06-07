@@ -25,6 +25,7 @@
     "migration:create": "npm run typeorm -- migration:create",
     "migration:generate": "npm run typeorm -- migration:generate -d ./src/data-source.ts",
     "migration:run": "npm run typeorm -- migration:run -d ./data-source.js",
+    "migration:run:dev": "cross-env NODE_ENV=development npm run typeorm -- migration:run -d ./src/data-source.ts",
     "migration:revert": "npm run typeorm -- migration:revert -d ./src/data-source.ts",
     "compile:worker": "node compile-worker.js",
     "postinstall": "node scripts/patch-anki-parser.js"

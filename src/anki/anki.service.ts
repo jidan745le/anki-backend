@@ -577,6 +577,7 @@ export class AnkiService implements OnApplicationBootstrap {
         return {
           ...omit(userDeck, 'deck'), // Spreads properties of userDeck itself (e.g., fsrsParams)
           ...userDeck.deck, // Spreads properties of the actual Deck entity
+          owned: userDeck.deck.creatorId === userId,
           stats, // Adds the calculated statistics
         };
       }),
@@ -1542,5 +1543,231 @@ export class AnkiService implements OnApplicationBootstrap {
     }
 
     return savedUserCards;
+  }
+
+  // 分享deck
+  async shareDeck(deckId: number, userId: number): Promise<any> {
+    const deck = await this.deckRepository.findOne({
+      where: { id: deckId, creatorId: userId },
+    });
+
+    if (!deck) {
+      throw new NotFoundException('Deck not found or you are not the creator');
+    }
+
+    deck.isShared = true;
+    return await this.deckRepository.save(deck);
+  }
+
+  // 获取共享的deck（排除自己的）
+  async getSharedDecks(userId: number): Promise<any[]> {
+    const sharedDecks = await this.deckRepository
+      .createQueryBuilder('deck')
+      .where('deck.isShared = :isShared', { isShared: true })
+      .andWhere('deck.creatorId != :userId', { userId })
+      .leftJoinAndSelect('deck.cards', 'cards')
+      .leftJoinAndSelect('deck.creator', 'creator')
+      // .leftJoinAndSelect('userDecks.user', 'user')
+      .getMany();
+
+    const myDecks = await this.deckRepository
+      .createQueryBuilder('deck')
+      .where('user.id = :userId', { userId })
+      .leftJoinAndSelect('deck.userDecks', 'userDecks')
+      .leftJoinAndSelect('deck.cards', 'cards')
+      .leftJoinAndSelect('userDecks.user', 'user')
+      // .leftJoinAndSelect('deck.creator', 'creator')
+      .getMany();
+    //shareddecks中有myDecks的deck，则加一个duplicated=true属性
+    const duplicatedDecks = sharedDecks.filter((deck) =>
+      myDecks.some((myDeck) => myDeck.id === deck.id),
+    );
+    console.log(duplicatedDecks, 'duplicatedDecks');
+    duplicatedDecks.forEach((deck) => {
+      (deck as any).duplicated = true;
+    });
+    console.log(sharedDecks, 'sharedDecks');
+
+    const result = [
+      ...sharedDecks.map((deck) => ({
+        ...deck,
+        totalCards: deck.cards?.length || 0,
+        cards: undefined,
+      })),
+    ];
+
+    return result;
+  }
+
+  // 复制shared deck
+  async duplicateDeck(deckId: number, userId: number): Promise<Deck> {
+    // 检查原deck是否存在且是shared的
+    const originalDeck = await this.deckRepository.findOne({
+      where: { id: deckId, isShared: true },
+      relations: ['cards'],
+    });
+
+    if (!originalDeck) {
+      throw new NotFoundException('Shared deck not found');
+    }
+
+    // 检查用户是否已经有这个deck的关联关系
+    const existingUserDeck = await this.userDeckService.getUserDeck(
+      userId,
+      deckId,
+    );
+    if (existingUserDeck) {
+      throw new Error('You already have access to this deck');
+    }
+
+    // 为用户创建用户-deck关系（不创建新的deck，直接关联现有的shared deck）
+    await this.userDeckService.assignDeckToUser(userId, deckId);
+
+    // 为用户创建学习记录 - 基于现有的cards
+    if (originalDeck.cards && originalDeck.cards.length > 0) {
+      await this.createUserCardsForExistingCards(
+        originalDeck.cards,
+        deckId,
+        userId,
+      );
+    }
+
+    return originalDeck;
+  }
+
+  // 为现有卡片创建用户学习记录（不重复创建基础卡片）
+  private async createUserCardsForExistingCards(
+    existingCards: Card[],
+    deckId: number,
+    userId: number,
+  ): Promise<UserCard[]> {
+    // 查找牌组
+    const deck = await this.deckRepository.findOne({ where: { id: deckId } });
+    if (!deck) {
+      throw new NotFoundException(`Deck with ID ${deckId} not found`);
+    }
+
+    // 获取用户-牌组关系，主要是获取 FSRS 参数
+    const userDeck = await this.userDeckService.getUserDeck(userId, deckId);
+    if (!userDeck) {
+      throw new NotFoundException(`User-Deck relationship not found`);
+    }
+
+    // 为用户创建卡片学习记录
+    const userCards: UserCard[] = [];
+
+    for (const card of existingCards) {
+      // 创建用户卡片
+      const userCard = this.userCardRepository.create({
+        user: { id: userId },
+        card, // 直接使用现有的基础卡片
+        deck,
+        front: card.front, // 从基础卡片复制内容
+        customBack: card.back,
+      });
+
+      this.fsrsService.initializeUserCard(userCard);
+      userCards.push(userCard);
+    }
+
+    // 批量保存用户卡片
+    const savedUserCards = await this.userCardRepository.save(userCards);
+
+    // Refresh Redis cache after adding new cards
+    await this.refreshUserDeckCardsInRedis(userId, deckId);
+
+    return savedUserCards;
+  }
+
+  // 分页查询deck中的原始卡片
+  async getDeckOriginalCards(
+    deckId: number,
+    userId: number,
+    page = 1,
+    limit = 20,
+  ): Promise<{
+    data: Card[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrev: boolean;
+    deckInfo: {
+      id: number;
+      name: string;
+      description: string;
+      deckType: string;
+      isShared: boolean;
+      createdAt: Date;
+      updatedAt: Date;
+      creator: {
+        id: number;
+        username: string;
+      };
+      totalCards: number;
+    };
+  }> {
+    // 首先验证用户是否有访问该deck的权限
+    const userDeck = await this.userDeckService.getUserDeck(userId, deckId);
+
+    // 查询 deck 信息，包含创建者信息
+    const deck = await this.deckRepository.findOne({
+      where: { id: deckId },
+      relations: ['creator'],
+    });
+
+    if (!deck) {
+      throw new NotFoundException('Deck not found');
+    }
+
+    if (!userDeck && !deck.isShared) {
+      throw new NotFoundException('You do not have access to this deck');
+    }
+
+    // 计算偏移量
+    const skip = (page - 1) * limit;
+
+    // 查询总数
+    const total = await this.cardRepository.count({
+      where: { deck: { id: deckId } },
+    });
+
+    // 分页查询卡片
+    const cards = await this.cardRepository.find({
+      where: { deck: { id: deckId } },
+      order: { createdAt: 'ASC' },
+      skip,
+      take: limit,
+    });
+
+    const totalPages = Math.ceil(total / limit);
+
+    // 构建 deck 信息对象
+    const deckInfo = {
+      id: deck.id,
+      name: deck.name,
+      description: deck.description || '',
+      deckType: deck.deckType,
+      isShared: deck.isShared,
+      createdAt: deck.createdAt,
+      updatedAt: deck.updatedAt,
+      creator: {
+        id: deck.creator?.id || deck.creatorId,
+        username: deck.creator?.username || 'Unknown',
+      },
+      totalCards: total,
+    };
+
+    return {
+      data: cards,
+      total,
+      page,
+      limit,
+      totalPages,
+      hasNext: page < totalPages,
+      hasPrev: page > 1,
+      deckInfo,
+    };
   }
 }

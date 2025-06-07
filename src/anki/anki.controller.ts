@@ -300,4 +300,52 @@ export class AnkiController {
     const userId: number = req?.user?.id;
     return await this.userDeckService.removeUserDeck(userId, deckId);
   }
+
+  // 分享deck
+  @Post('share/:deckId')
+  async shareDeck(@Param('deckId', ParseIntPipe) deckId: number, @Req() req) {
+    const userId: number = req?.user?.id;
+    return await this.ankiService.shareDeck(deckId, userId);
+  }
+
+  // 获取共享的deck列表（排除自己的）
+  @Get('shared-decks')
+  async getSharedDecks(@Req() req) {
+    const userId: number = req?.user?.id;
+    return await this.ankiService.getSharedDecks(userId);
+  }
+
+  // 关联shared deck到用户账户
+  @Post('duplicate/:deckId')
+  async duplicateDeck(
+    @Param('deckId', ParseIntPipe) deckId: number,
+    @Req() req,
+  ) {
+    const userId: number = req?.user?.id;
+    return await this.ankiService.duplicateDeck(deckId, userId);
+  }
+
+  // 分页查询deck中的原始卡片
+  @Get('decks/:deckId/original-cards')
+  async getDeckOriginalCards(
+    @Param('deckId', ParseIntPipe) deckId: number,
+    @Req() req,
+    @Query('page') pageParam?: string,
+    @Query('limit') limitParam?: string,
+  ) {
+    const userId: number = req?.user?.id;
+    const page = pageParam ? parseInt(pageParam, 10) : 1;
+    const limit = limitParam ? parseInt(limitParam, 10) : 20;
+
+    // 验证参数范围
+    const validPage = Math.max(1, page);
+    const validLimit = Math.min(Math.max(1, limit), 100);
+
+    return await this.ankiService.getDeckOriginalCards(
+      deckId,
+      userId,
+      validPage,
+      validLimit,
+    );
+  }
 }

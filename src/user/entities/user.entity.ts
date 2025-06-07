@@ -44,4 +44,7 @@ export class User {
   get decks(): Deck[] {
     return this.userDecks?.map((ud) => ud.deck) || [];
   }
+
+  @OneToMany(() => Deck, (deck) => deck.creator)
+  createdDecks: Deck[];
 }

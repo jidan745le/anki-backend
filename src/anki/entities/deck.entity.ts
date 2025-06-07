@@ -4,6 +4,8 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  JoinColumn,
+  ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
@@ -77,12 +79,19 @@ export class Deck {
   })
   status: DeckStatus;
 
+  @Column({ type: 'boolean', default: false })
+  isShared: boolean;
+
   @BeforeInsert()
   generateUuid() {
     if (!this.uuid) {
       this.uuid = uuidv4();
     }
   }
+
+  @ManyToOne(() => User, { nullable: true, cascade: true })
+  @JoinColumn({ name: 'creatorId' })
+  creator: User;
 
   // 获取拥有此牌组的用户 (可选，用于向后兼容)
   get users(): User[] {
