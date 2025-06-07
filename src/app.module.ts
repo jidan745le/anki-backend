@@ -16,6 +16,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { AuthUser } from './auth/entities/auth-user.entity';
+import { TempFile } from './file/entities/temp-file.entity';
 import { FileModule } from './file/file.module';
 import { RedisModule } from './redis/redis.module';
 import { ResponseInterceptor } from './response.interceptor';
@@ -55,6 +56,7 @@ import { WebsocketModule } from './websocket/websocket.module';
           ChatMessage,
           UserDeck,
           UserCard,
+          TempFile,
         ],
         poolSize: configService.getOrThrow('DB_POOL_SIZE'),
         connectorPackage: 'mysql2',
