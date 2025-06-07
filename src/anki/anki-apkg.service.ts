@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { WebsocketGateway } from 'src/websocket/websocket.gateway';
@@ -22,6 +23,367 @@ export class AnkiApkgService {
     private readonly deckRepository: Repository<Deck>,
   ) {
     this.logger.log('AnkiApkgService初始化');
+  }
+
+  /**
+   * 第一步：解析APKG文件并返回模板实例（同步）
+   */
+  async parseApkgTemplates(
+    file: Express.Multer.File,
+    userId: number,
+  ): Promise<any> {
+    try {
+      this.logger.log(
+        `开始解析APKG文件模板: ${file.originalname}, 用户ID: ${userId}`,
+      );
+
+      // 创建唯一任务ID用于跟踪
+      const taskId = randomUUID();
+      const tempDir = path.join(process.cwd(), 'uploads', 'apkg-temp', taskId);
+
+      // 确保临时目录存在
+      this.logger.log(`创建临时目录: ${tempDir}`);
+      fs.mkdirSync(tempDir, { recursive: true });
+
+      // 将文件保存到临时目录
+      const filePath = path.join(tempDir, 'deck.apkg');
+      this.logger.log(`复制文件到: ${filePath}`);
+      fs.writeFileSync(filePath, fs.readFileSync(file.path));
+
+      // 使用桥接脚本处理APKG文件
+      const extractDir = path.join(tempDir, 'extracted');
+      this.logger.log(`提取目录: ${extractDir}`);
+
+      this.logger.log('调用桥接脚本...');
+      await this.executeBridgeScript(filePath, extractDir, userId, taskId);
+
+      // 从JSON读取解析结果
+      const resultsPath = path.join(extractDir, 'parsed_results.json');
+      if (!fs.existsSync(resultsPath)) {
+        throw new Error('解析APKG文件失败: 未生成结果文件');
+      }
+
+      this.logger.log(`读取解析结果: ${resultsPath}`);
+      const parsedData = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+      this.logger.log(
+        `解析结果: ${parsedData.notes}笔记, ${parsedData.cards.length}卡片`,
+      );
+
+      // 分析模板类型
+      const templates = this.analyzeTemplates(parsedData);
+
+      this.logger.log(`分析出${templates.length}个模板类型`);
+
+      // 返回解析结果，包含模板信息
+      return {
+        taskId,
+        totalNotes: parsedData.notes,
+        totalCards: parsedData.cards.length,
+        templates,
+      };
+    } catch (error) {
+      this.logger.error('parseApkgTemplates函数出错:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 分析模板类型，从parsedData中提取不同的模板
+   */
+  private analyzeTemplates(parsedData: any): any[] {
+    const templateMap = new Map();
+    const sampleCardsMap = new Map();
+
+    // 遍历所有卡片，按模板名称分组
+    parsedData.cards.forEach((card: any) => {
+      const templateName = card.template.name;
+
+      if (!templateMap.has(templateName)) {
+        templateMap.set(templateName, {
+          name: templateName,
+          front: card.template.front,
+          back: card.template.back,
+          count: 0,
+          fields: new Set(),
+        });
+        sampleCardsMap.set(templateName, []);
+      }
+
+      const template = templateMap.get(templateName);
+      template.count++;
+
+      // 收集字段名称
+      Object.keys(card.fields).forEach((field) => {
+        template.fields.add(field);
+      });
+
+      // 保存前3个样例卡片
+      if (sampleCardsMap.get(templateName).length < 3) {
+        sampleCardsMap.get(templateName).push({
+          fields: card.fields,
+          renderedSample: this.renderAnkiCard(
+            card.template.front,
+            card.template.back,
+            card.fields,
+          ),
+        });
+      }
+    });
+
+    // 转换为数组格式
+    const templates = Array.from(templateMap.entries()).map(
+      ([name, template]) => ({
+        name: template.name,
+        front: template.front,
+        back: template.back,
+        count: template.count,
+        fields: Array.from(template.fields),
+        sampleCards: sampleCardsMap.get(name),
+      }),
+    );
+
+    return templates;
+  }
+
+  /**
+   * 第二步：根据选择的模板异步执行渲染入库
+   */
+  async processSelectedTemplates(
+    taskId: string,
+    selectedTemplates: any[],
+    deckInfo: Deck & { user: any },
+    userId: number,
+  ): Promise<any> {
+    try {
+      this.logger.log(
+        `开始处理选择的模板: taskId=${taskId}, 牌组ID=${deckInfo.id}, 用户ID=${userId}`,
+      );
+
+      // 发送初始进度通知
+      this.websocketGateway.sendTaskInit(userId, taskId);
+      this.websocketGateway.sendProgress(
+        userId,
+        taskId,
+        10,
+        '开始处理选择的模板',
+      );
+
+      // 异步处理文件
+      this.logger.log('启动异步处理');
+      this.processSelectedTemplatesAsync(
+        taskId,
+        selectedTemplates,
+        deckInfo,
+        userId,
+      ).catch((error) => {
+        this.logger.error(
+          `处理选择的模板时发生错误，牌组ID: ${deckInfo.id}:`,
+          error,
+        );
+        this.websocketGateway.sendProgress(
+          userId,
+          taskId,
+          -1,
+          `错误: ${error.message}`,
+        );
+      });
+
+      // 立即返回结果
+      this.logger.log(`返回初始响应，任务ID: ${taskId}`);
+      return {
+        ...deckInfo,
+        taskId,
+        message: '开始处理选择的模板',
+      };
+    } catch (error) {
+      this.logger.error('processSelectedTemplates函数出错:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 异步处理选择的模板
+   */
+  private async processSelectedTemplatesAsync(
+    taskId: string,
+    selectedTemplates: any[],
+    deck: Deck & { user: any },
+    userId: number,
+  ): Promise<void> {
+    try {
+      this.logger.log(
+        `异步处理选择的模板开始: 牌组ID=${deck.id}, 用户ID=${userId}`,
+      );
+
+      // 根据taskId重新构造临时目录路径
+      const tempDir = path.join(process.cwd(), 'uploads', 'apkg-temp', taskId);
+
+      // 读取之前保存的解析结果
+      const resultsPath = path.join(
+        tempDir,
+        'extracted',
+        'parsed_results.json',
+      );
+      if (!fs.existsSync(resultsPath)) {
+        throw new Error('找不到解析结果文件，请重新上传APKG文件');
+      }
+
+      const parsedData = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+      this.logger.log(
+        `读取解析结果: ${parsedData.notes}笔记, ${parsedData.cards.length}卡片`,
+      );
+
+      // 创建选择的模板名称集合
+      const selectedTemplateNames = new Set(
+        selectedTemplates.map((t) => t.name),
+      );
+
+      // 过滤出匹配选择模板的卡片
+      const filteredCards = parsedData.cards.filter((card: any) =>
+        selectedTemplateNames.has(card.template.name),
+      );
+
+      this.logger.log(`过滤后的卡片数量: ${filteredCards.length}`);
+
+      // 应用模板修改
+      const modifiedCards = this.applyTemplateModifications(
+        filteredCards,
+        selectedTemplates,
+      );
+
+      // 开始导入卡片
+      this.websocketGateway.sendProgress(
+        userId,
+        taskId,
+        30,
+        `导入${modifiedCards.length}张卡片`,
+      );
+
+      const totalCards = modifiedCards.length;
+      this.logger.log(`开始处理${totalCards}张卡片`);
+
+      const BATCH_SIZE = 100; // 每批处理100张卡片
+      let cardsProcessed = 0;
+
+      // 分批处理所有卡片
+      while (cardsProcessed < totalCards) {
+        const currentBatch = [];
+        const endIndex = Math.min(cardsProcessed + BATCH_SIZE, totalCards);
+
+        for (let i = cardsProcessed; i < endIndex; i++) {
+          const cardData = modifiedCards[i];
+
+          // 渲染卡片
+          const renderedCard = this.renderAnkiCard(
+            cardData.template.front,
+            cardData.template.back,
+            cardData.fields,
+          );
+
+          // 创建卡片实体
+          const card = new Card();
+          card.front = this.sanitizeHtml(renderedCard.front);
+          card.back = this.sanitizeHtml(renderedCard.back);
+          card.frontType = ContentType.TEXT;
+          card.deck = deck;
+
+          currentBatch.push(card);
+        }
+
+        // 更新进度
+        cardsProcessed = endIndex;
+        const progress = 30 + Math.floor((cardsProcessed / totalCards) * 50);
+        this.logger.log(
+          `已处理${cardsProcessed}/${totalCards}卡片，进度${progress}%`,
+        );
+        this.websocketGateway.sendProgress(
+          userId,
+          taskId,
+          progress,
+          `已处理${cardsProcessed}/${totalCards}卡片`,
+        );
+
+        // 将当前批次卡片保存到数据库
+        this.logger.log(`保存批次: ${currentBatch.length}张卡片`);
+        await this.ankiService.addCardsForUserDeck(
+          currentBatch,
+          deck.id,
+          userId,
+        );
+
+        // 强制垃圾回收，释放内存
+        if (global.gc) {
+          this.logger.log('手动触发垃圾回收');
+          global.gc();
+        }
+      }
+
+      // 更新进度
+      this.websocketGateway.sendProgress(userId, taskId, 80, '卡片导入完成');
+
+      this.logger.log(`所有卡片处理完成: ${totalCards}张`);
+
+      // 清理
+      this.websocketGateway.sendProgress(userId, taskId, 90, '清理临时文件');
+
+      // 清理临时文件
+      this.logger.log(`清理临时目录: ${tempDir}`);
+      this.cleanupTempFiles(tempDir);
+
+      // 更新牌组状态为已完成
+      this.logger.log(`更新牌组状态为已完成: ${deck.id}`);
+      await this.deckRepository.update(deck.id, {
+        status: DeckStatus.COMPLETED,
+      });
+
+      // 最终进度
+      this.websocketGateway.sendProgress(userId, taskId, 100, '导入成功完成');
+
+      this.logger.log(
+        `选择模板处理完成，牌组ID: ${deck.id}, 用户ID: ${userId}`,
+      );
+    } catch (error) {
+      this.logger.error('processSelectedTemplatesAsync函数出错:', error);
+
+      // 更新牌组状态为失败
+      this.logger.log(`更新牌组状态为失败: ${deck.id}`);
+      await this.deckRepository.update(deck.id, {
+        status: DeckStatus.FAILED,
+      });
+
+      // 重新抛出错误由调用者捕获
+      throw error;
+    }
+  }
+
+  /**
+   * 应用前端对模板的修改
+   */
+  private applyTemplateModifications(
+    cards: any[],
+    selectedTemplates: any[],
+  ): any[] {
+    // 创建模板名称到修改后模板的映射
+    const templateModifications = new Map();
+    selectedTemplates.forEach((template) => {
+      templateModifications.set(template.name, template);
+    });
+
+    // 应用修改
+    return cards.map((card) => {
+      const modification = templateModifications.get(card.template.name);
+      if (modification) {
+        return {
+          ...card,
+          template: {
+            ...card.template,
+            front: modification.front || card.template.front,
+            back: modification.back || card.template.back,
+          },
+        };
+      }
+      return card;
+    });
   }
 
   /**

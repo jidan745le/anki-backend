@@ -17,6 +17,7 @@ import { LoginGuard } from '../login.guard';
 import { AnkiService, LearnOrder } from './anki.service';
 import { CreateAnkiDto } from './dto/create-anki.dto';
 import { CreateDeckDto } from './dto/create-deck.dto';
+import { ProcessSelectedTemplatesDto } from './dto/process-selected-templates.dto';
 import { SplitAudioDto } from './dto/split-audio.dto';
 import {
   UpdateCardWithFSRSDto,
@@ -128,7 +129,7 @@ export class AnkiController {
         // 发送初始化任务通知
         console.log('file', file);
         if (file.originalname.endsWith('.apkg')) {
-          // 异步处理卡片导入
+          // 异步处理卡片导入 (保留原有的一步式处理)
           return await this.ankiApkgService.processApkgFile(
             file,
             newDeck,
@@ -170,6 +171,63 @@ export class AnkiController {
   @Post('deleteDeck/:deckId')
   async deleteDeck(@Param('deckId') deckId: number) {
     return await this.ankiService.deleteDeck(deckId);
+  }
+
+  @Post('parseApkgTemplates')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      dest: 'uploads',
+    }),
+  )
+  async parseApkgTemplates(
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req,
+  ) {
+    try {
+      const userId: number = req?.user?.id;
+      console.log('解析APKG模板:', file.originalname, 'userId:', userId);
+
+      if (!file.originalname.endsWith('.apkg')) {
+        throw new Error('文件必须是.apkg格式');
+      }
+
+      return await this.ankiApkgService.parseApkgTemplates(file, userId);
+    } catch (error) {
+      console.error('解析APKG模板失败:', error);
+      throw error;
+    }
+  }
+
+  @Post('processSelectedTemplates')
+  async processSelectedTemplates(
+    @Body(ValidationPipe) body: ProcessSelectedTemplatesDto,
+    @Req() req,
+  ) {
+    try {
+      const userId: number = req?.user?.id;
+      console.log('处理选择的模板:', body);
+
+      // 创建牌组
+      const taskId = body.taskId;
+      const newDeck = await this.ankiService.addDeck(
+        {
+          ...body.deckInfo,
+          taskId,
+          status: DeckStatus.PROCESSING,
+        },
+        userId,
+      );
+
+      return await this.ankiApkgService.processSelectedTemplates(
+        body.taskId,
+        body.selectedTemplates,
+        newDeck,
+        userId,
+      );
+    } catch (error) {
+      console.error('处理选择的模板失败:', error);
+      throw error;
+    }
   }
 
   @Post('createDeckWithAudio')
