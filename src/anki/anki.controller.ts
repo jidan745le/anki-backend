@@ -28,6 +28,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { v4 as uuidv4 } from 'uuid';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { AnkiApkgService } from './anki-apkg.service';
+import { DeckReferenceService } from './deck-reference.service';
 import { CreatePodcastDeckDto } from './dto/create-podcast-deck.dto';
 import { AssignDeckDto } from './dto/user-deck.dto';
 import { DeckStatus, DeckType } from './entities/deck.entity';
@@ -41,6 +42,7 @@ export class AnkiController {
     private readonly websocketGateway: WebsocketGateway,
     private readonly userDeckService: UserDeckService,
     private readonly ankiApkgService: AnkiApkgService,
+    private readonly deckReferenceService: DeckReferenceService,
   ) {}
 
   @Get('getNextCard')
@@ -169,8 +171,9 @@ export class AnkiController {
   }
 
   @Post('deleteDeck/:deckId')
-  async deleteDeck(@Param('deckId') deckId: number) {
-    return await this.ankiService.deleteDeck(deckId);
+  async deleteDeck(@Param('deckId') deckId: number, @Req() req) {
+    const userId: number = req?.user?.id;
+    return await this.ankiService.deleteDeck(deckId, userId);
   }
 
   @Post('parseApkgTemplates')
@@ -405,5 +408,13 @@ export class AnkiController {
       validPage,
       validLimit,
     );
+  }
+
+  // 管理接口：同步所有deck的引用计数
+  @Post('admin/sync-reference-count')
+  async syncReferenceCount(@Req() req) {
+    const userId: number = req?.user?.id;
+    // 这里可以添加管理员权限检查
+    return await this.deckReferenceService.syncAllReferenceCount();
   }
 }

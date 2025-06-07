@@ -12,7 +12,7 @@ export class CreateDeckDto {
   @IsString()
   name: string; // 名字
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
   @MaxLength(500, { message: 'Description is too long' })
   description: string; // 描述

@@ -1,11 +1,12 @@
 import {
-    Column,
-    CreateDateColumn,
-    Entity,
-    JoinColumn,
-    ManyToOne,
-    PrimaryGeneratedColumn,
-    UpdateDateColumn,
+  Column,
+  CreateDateColumn,
+  DeleteDateColumn,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { Deck } from './deck.entity';
@@ -44,4 +45,8 @@ export class UserDeck {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  // 软删除字段
+  @DeleteDateColumn()
+  deletedAt: Date;
 }

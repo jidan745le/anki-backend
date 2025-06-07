@@ -1,26 +1,26 @@
-import { RegisterDto } from './dto/register.dto';
-import { LoginDto } from './dto/login.dto';
 import {
-  Controller,
-  Post,
   Body,
+  Controller,
+  Get,
+  HttpException,
+  HttpStatus,
   Inject,
+  Logger,
+  Post,
+  Query,
   Req,
   Res,
-  Get,
-  ValidationPipe,
-  HttpException,
-  Logger,
-  HttpStatus,
-  UseGuards,
-  Query,
   UnauthorizedException,
+  UseGuards,
+  ValidationPipe,
 } from '@nestjs/common';
-import { UserService } from './user.service';
 import { JwtService } from '@nestjs/jwt';
 import { Response } from 'express';
-import { WebsocketGateway } from 'src/websocket/websocket.gateway';
 import { LoginGuard } from 'src/login.guard';
+import { WebsocketGateway } from 'src/websocket/websocket.gateway';
+import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
+import { UserService } from './user.service';
 
 @Controller('user')
 export class UserController {
@@ -156,6 +156,27 @@ export class UserController {
       };
     } catch (e) {
       throw new UnauthorizedException('token 已失效，请重新登录');
+    }
+  }
+
+  @UseGuards(LoginGuard)
+  @Get('profile')
+  async getUserProfile(@Req() req) {
+    try {
+      const userId = req?.user?.id;
+      if (!userId) {
+        throw new UnauthorizedException('用户未登录');
+      }
+
+      const profile = await this.userService.getUserProfile(userId);
+
+      return profile;
+    } catch (error) {
+      Logger.error('Get profile error:', error);
+      throw new HttpException(
+        error.message || '获取用户信息失败',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 }

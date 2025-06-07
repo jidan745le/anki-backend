@@ -3,6 +3,7 @@ import {
   BeforeInsert,
   Column,
   CreateDateColumn,
+  DeleteDateColumn,
   Entity,
   JoinColumn,
   ManyToOne,
@@ -58,14 +59,18 @@ export class Deck {
   @UpdateDateColumn()
   updatedAt: Date;
 
+  @DeleteDateColumn()
+  deletedAt: Date;
+
+  @Column({ default: 0 })
+  referenceCount: number;
+
   @OneToMany(() => Card, (card) => card.deck)
   cards: Card[];
 
-  // 牌组的用户关系
   @OneToMany(() => UserDeck, (userDeck) => userDeck.deck)
   userDecks: UserDeck[];
 
-  // 创建者/拥有者 (可选，用于向后兼容)
   @Column({ nullable: true })
   creatorId: number;
 
@@ -89,11 +94,10 @@ export class Deck {
     }
   }
 
-  @ManyToOne(() => User, { nullable: true, cascade: true })
+  @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'creatorId' })
   creator: User;
 
-  // 获取拥有此牌组的用户 (可选，用于向后兼容)
   get users(): User[] {
     return this.userDecks?.map((ud) => ud.user) || [];
   }

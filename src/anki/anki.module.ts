@@ -4,6 +4,7 @@ import { EmbeddingService } from '../embedding/embedding.service';
 import { AnkiApkgService } from './anki-apkg.service';
 import { AnkiController } from './anki.controller';
 import { AnkiService } from './anki.service';
+import { DeckReferenceService } from './deck-reference.service';
 import { Card } from './entities/card.entity';
 import { DeckSettings } from './entities/deck-settings.entity';
 import { Deck } from './entities/deck.entity';
@@ -20,6 +21,7 @@ import { UserDeckService } from './user-deck.service';
   providers: [
     AnkiService,
     UserDeckService,
+    DeckReferenceService,
     EmbeddingService,
     FSRSService,
     AnkiApkgService,

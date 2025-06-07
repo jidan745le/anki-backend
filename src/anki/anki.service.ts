@@ -23,6 +23,7 @@ import { omit } from 'lodash';
 import { Grade } from 'ts-fsrs';
 import { EntityManager, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
+import { DeckReferenceService } from './deck-reference.service';
 import { CreateAnkiDto } from './dto/create-anki.dto';
 import { CreateDeckDto } from './dto/create-deck.dto';
 import {
@@ -71,6 +72,7 @@ export class AnkiService implements OnApplicationBootstrap {
     private readonly embeddingService: EmbeddingService,
     private readonly userDeckService: UserDeckService,
     private readonly websocketService: WebSocketService,
+    private readonly deckReferenceService: DeckReferenceService,
     @InjectRepository(UserCard)
     private readonly userCardRepository: Repository<UserCard>,
     private readonly fsrsService: FSRSService,
@@ -586,9 +588,66 @@ export class AnkiService implements OnApplicationBootstrap {
     return decksWithStats;
   }
 
-  async deleteDeck(deckId: number): Promise<void> {
-    await this.deckRepository.delete(deckId);
-    await this.embeddingService.deleteVectorStore(deckId);
+  async deleteDeck(
+    deckId: number,
+    userId?: number,
+  ): Promise<{ deleted: boolean; message: string; type: 'physical' | 'soft' }> {
+    if (!userId) {
+      throw new Error('User ID is required for deck deletion');
+    }
+
+    // 验证用户是否有权限删除此deck
+    const deck = await this.deckRepository.findOne({
+      where: { id: deckId },
+      withDeleted: false,
+    });
+
+    if (!deck) {
+      throw new Error('Deck not found');
+    }
+
+    // if (deck.creatorId !== userId) {
+    //   throw new Error('Only the creator can delete this deck');
+    // }
+
+    // 检查是否可以物理删除
+    const canPhysicallyDelete =
+      await this.deckReferenceService.canPhysicallyDelete(deckId, userId);
+
+    this.logger.log(
+      `Deck ${deckId} canPhysicallyDelete: ${canPhysicallyDelete}`,
+    );
+
+    if (canPhysicallyDelete) {
+      // 物理删除：创造者本人删除且没有其他人使用
+      await this.deckReferenceService.physicallyDeleteDeck(deckId);
+      await this.embeddingService.deleteVectorStore(deckId);
+
+      return {
+        deleted: true,
+        message: 'Deck has been permanently deleted (no other users)',
+        type: 'physical',
+      };
+    } else {
+      // 软删除：有其他人在使用
+      const activeUserCount =
+        await this.deckReferenceService.getActiveUserCount(deckId);
+      //如果是creatorid = userId，则shared = false
+      if (deck.creatorId === userId) {
+        await this.deckRepository.update(deckId, { isShared: false });
+      }
+
+      // 只删除创造者的UserDeck关系，不删除deck本身
+      await this.userDeckService.removeUserDeck(userId, deckId);
+
+      return {
+        deleted: true,
+        message: `Your access to the deck has been removed (${
+          activeUserCount - 1
+        } other users still have access)`,
+        type: 'soft',
+      };
+    }
   }
 
   async updateUserCard(
@@ -1412,6 +1471,7 @@ export class AnkiService implements OnApplicationBootstrap {
           this.websocketGateway.sendTaskInit(userId, taskId);
         }, 1000);
       }
+      this.websocketGateway.sendTaskInit(userId, taskId);
 
       // 第一步：解析文件
       this.websocketGateway.sendProgress(userId, taskId, 10, '正在解析文件...');
@@ -1539,6 +1599,10 @@ export class AnkiService implements OnApplicationBootstrap {
           });
       }
     } else {
+      await this.deckRepository.update(
+        { id: deckId },
+        { status: DeckStatus.COMPLETED },
+      );
       this.websocketGateway.sendProgress(userId, taskId, 100, '卡片插入完成');
     }
 

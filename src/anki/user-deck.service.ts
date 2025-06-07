@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../user/entities/user.entity';
+import { DeckReferenceService } from './deck-reference.service';
 import { Deck } from './entities/deck.entity';
 import { UserDeck } from './entities/user-deck.entity';
 
@@ -18,6 +19,7 @@ export class UserDeckService {
   constructor(
     @InjectRepository(UserDeck)
     private userDeckRepository: Repository<UserDeck>,
+    private deckReferenceService: DeckReferenceService,
   ) {}
 
   // 分配牌组给用户，可设置FSRS参数
@@ -55,26 +57,35 @@ export class UserDeckService {
       },
     });
 
-    return await this.userDeckRepository.save(userDeck);
+    const savedUserDeck = await this.userDeckRepository.save(userDeck);
+
+    // 增加引用计数
+    await this.deckReferenceService.incrementReference(deckId, userId);
+
+    return savedUserDeck;
   }
 
   // 获取用户所有牌组关系
   async getUserDecks(userId: number) {
-    return await this.userDeckRepository.find({
-      where: { user: { id: userId } },
-      relations: ['deck'],
-    });
+    return await this.userDeckRepository
+      .createQueryBuilder('userDeck')
+      .leftJoinAndSelect('userDeck.deck', 'deck')
+      .where('userDeck.user_id = :userId', { userId })
+      .andWhere('userDeck.deletedAt IS NULL') // 排除软删除的user_deck关系
+      .andWhere('deck.deletedAt IS NULL') // 排除软删除的deck
+      .getMany();
   }
 
   // 获取一个特定的用户-牌组关系
   async getUserDeck(userId: number, deckId: number) {
-    return await this.userDeckRepository.findOne({
-      where: {
-        user: { id: userId },
-        deck: { id: deckId },
-      },
-      relations: ['deck'],
-    });
+    return await this.userDeckRepository
+      .createQueryBuilder('userDeck')
+      .leftJoinAndSelect('userDeck.deck', 'deck')
+      .where('userDeck.user_id = :userId', { userId })
+      .andWhere('userDeck.deck_id = :deckId', { deckId })
+      .andWhere('userDeck.deletedAt IS NULL') // 排除软删除的user_deck关系
+      .andWhere('deck.deletedAt IS NULL') // 排除软删除的deck
+      .getOne();
   }
 
   // 删除用户-牌组关系
@@ -84,6 +95,23 @@ export class UserDeckService {
       throw new Error('User-Deck relationship not found');
     }
 
-    return await this.userDeckRepository.remove(userDeck);
+    // 软删除用户-牌组关系
+    await this.userDeckRepository.softDelete(userDeck.id);
+
+    // 软删除用户的相关UserCard记录
+    await this.userDeckRepository.query(
+      'UPDATE user_cards SET deletedAt = NOW() WHERE user_id = ? AND deck_id = ?',
+      [userId, deckId],
+    );
+
+    // 减少引用计数
+    const remainingReferences =
+      await this.deckReferenceService.decrementReference(deckId, userId);
+
+    return {
+      removed: true,
+      remainingReferences,
+      message: `User-deck relationship and related user cards have been removed. ${remainingReferences} references remaining.`,
+    };
   }
 }
