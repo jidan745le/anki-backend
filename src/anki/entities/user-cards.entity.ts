@@ -75,6 +75,9 @@ export class UserCard {
   @Column({ type: 'float', default: 0 })
   scheduledDays: number;
 
+  @Column({ type: 'int', default: 0 })
+  learningSteps: number;
+
   // 学习统计
   @Column({ default: 0 })
   reps: number;

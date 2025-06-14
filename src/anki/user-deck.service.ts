@@ -114,4 +114,61 @@ export class UserDeckService {
       message: `User-deck relationship and related user cards have been removed. ${remainingReferences} references remaining.`,
     };
   }
+
+  // 更新用户deck的FSRS参数
+  async updateUserDeckFsrsParameters(
+    userId: number,
+    deckId: number,
+    fsrsParameters: any,
+  ) {
+    const userDeck = await this.userDeckRepository.findOne({
+      where: {
+        user: { id: userId },
+        deck: { id: deckId },
+      },
+    });
+
+    if (!userDeck) {
+      throw new Error('User deck relationship not found');
+    }
+
+    userDeck.fsrsParameters = {
+      ...userDeck.fsrsParameters,
+      ...fsrsParameters,
+    };
+
+    return await this.userDeckRepository.save(userDeck);
+  }
+
+  // 更新用户deck的配置和FSRS参数
+  async updateUserDeckConfigAndFsrsParameters(
+    userId: number,
+    deckId: number,
+    config: { size: string; align: string },
+    fsrsParameters: any,
+  ) {
+    const userDeck = await this.userDeckRepository.findOne({
+      where: {
+        user: { id: userId },
+        deck: { id: deckId },
+      },
+    });
+
+    if (!userDeck) {
+      throw new Error('User deck relationship not found');
+    }
+
+    // 更新config和FSRS参数
+    userDeck.config = {
+      ...userDeck.config,
+      ...config,
+    };
+
+    userDeck.fsrsParameters = {
+      ...userDeck.fsrsParameters,
+      ...fsrsParameters,
+    };
+
+    return await this.userDeckRepository.save(userDeck);
+  }
 }

@@ -29,9 +29,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { WebsocketGateway } from '../websocket/websocket.gateway';
 import { AnkiApkgService } from './anki-apkg.service';
 import { DeckReferenceService } from './deck-reference.service';
+import { CreateEpubDeckDto } from './dto/create-epub-deck.dto';
 import { CreatePodcastDeckDto } from './dto/create-podcast-deck.dto';
+import { UpdateDeckConfigDto } from './dto/update-deck-config.dto';
 import { AssignDeckDto } from './dto/user-deck.dto';
 import { DeckStatus, DeckType } from './entities/deck.entity';
+import { EpubService } from './epub.service';
 import { UserDeckService } from './user-deck.service';
 
 @UseGuards(LoginGuard)
@@ -43,6 +46,7 @@ export class AnkiController {
     private readonly userDeckService: UserDeckService,
     private readonly ankiApkgService: AnkiApkgService,
     private readonly deckReferenceService: DeckReferenceService,
+    private readonly epubService: EpubService,
   ) {}
 
   @Get('getNextCard')
@@ -63,6 +67,35 @@ export class AnkiController {
       order,
       isMount,
     );
+  }
+
+  @Get('getCard')
+  async getCard(
+    @Query('uuid') uuid: string,
+    @Query('includeStats') includeStats = 'true',
+    @Query('includeAllCards') includeAllCards = 'true',
+    @Req() req,
+  ) {
+    const userId: number = req?.user?.id;
+    const includeStatsBoolean = includeStats === 'true';
+    const includeAllCardsBoolean = includeAllCards === 'true';
+
+    try {
+      const result = await this.ankiService.getCardByUuid(
+        uuid,
+        userId,
+        includeStatsBoolean,
+        includeAllCardsBoolean,
+      );
+
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        data: null,
+        message: error.message || 'Failed to retrieve card',
+      };
+    }
   }
 
   @Post('updateCardWithFSRS')
@@ -115,55 +148,31 @@ export class AnkiController {
       console.log('deck', deck);
       const userId: number = req?.user?.id;
       console.log('userId', userId);
-      const useEmbedding = deck.useEmbedding;
-
-      const taskId = uuidv4();
       const newDeck = await this.ankiService.addDeck(
         {
           ...deck,
-          taskId,
-          status: file ? DeckStatus.PROCESSING : DeckStatus.COMPLETED,
         },
         userId,
       );
+      if (file.originalname.endsWith('.txt')) {
+        // 异步处理卡片导入
+        await this.ankiService
+          .parseCardsFileAndAddToUserDeck(file, newDeck.id, userId)
+          .catch((error) => {
+            console.error(
+              `Error processing cards for deck ${newDeck.id}:`,
+              error,
+            );
+          });
+        return {
+          ...newDeck,
+        };
 
-      if (file) {
-        // 发送初始化任务通知
-        console.log('file', file);
-        if (file.originalname.endsWith('.apkg')) {
-          // 异步处理卡片导入 (保留原有的一步式处理)
-          return await this.ankiApkgService.processApkgFile(
-            file,
-            newDeck,
-            userId,
-          );
-        } else if (file.originalname.endsWith('.txt')) {
-          // 异步处理卡片导入
-          this.ankiService
-            .parseCardsFileAndAddToUserDeck(
-              file,
-              newDeck.id,
-              userId,
-              taskId,
-              useEmbedding,
-            )
-            .catch((error) => {
-              console.error(
-                `Error processing cards for deck ${newDeck.id}:`,
-                error,
-              );
-            });
-
-          // 立即返回响应
-          return {
-            ...newDeck,
-            taskId,
-            message: 'Processing started',
-          };
-        }
+        // 立即返回响应
       }
-
-      return newDeck;
+      return {
+        ...newDeck,
+      };
     } catch (e) {
       console.log(e);
       throw e;
@@ -416,5 +425,139 @@ export class AnkiController {
     const userId: number = req?.user?.id;
     // 这里可以添加管理员权限检查
     return await this.deckReferenceService.syncAllReferenceCount();
+  }
+
+  @Post('addEpubDeck')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: {
+        fileSize: 50 * 1024 * 1024, // 50MB limit
+      },
+    }),
+  )
+  async createEpubDeck(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() dto: CreateEpubDeckDto,
+    @Req() req,
+  ) {
+    try {
+      const userId: number = req?.user?.id;
+      this.websocketGateway.sendProgress(
+        userId,
+        'epub',
+        0,
+        'Processing EPUB file...',
+      );
+
+      console.log('File info:', {
+        originalname: file?.originalname,
+        mimetype: file?.mimetype,
+        size: file?.size,
+        bufferLength: file?.buffer?.length,
+        hasBuffer: !!file?.buffer,
+      });
+
+      if (!file) {
+        throw new Error('EPUB file is required');
+      }
+
+      if (!file.originalname.toLowerCase().endsWith('.epub')) {
+        throw new Error('File must be an EPUB format');
+      }
+
+      if (!file.buffer) {
+        throw new Error('File buffer is missing. Upload may have failed.');
+      }
+
+      // 处理EPUB文件
+      // this.websocketGateway.sendProgress(
+      //   userId,
+      //   'epub',
+      //   20,
+      //   'Converting EPUB to Markdown...',
+      // );
+      const result = await this.epubService.processEpubToDeck(
+        file,
+        dto,
+        userId,
+      );
+
+      // this.websocketGateway.sendProgress(
+      //   userId,
+      //   'epub',
+      //   100,
+      //   'EPUB processing completed',
+      // );
+
+      return {
+        cardsCount: result.cards.length,
+        message: `Successfully created deck "${result.deck.name}" with ${result.cards.length} cards`,
+      };
+    } catch (error) {
+      console.error('EPUB processing error:', error);
+      const userId: number = req?.user?.id;
+      // this.websocketGateway.sendProgress(
+      //   userId,
+      //   'epub',
+      //   -1,
+      //   `Error: ${error.message}`,
+      // );
+      throw error;
+    }
+  }
+
+  @Post('embedding/:deckId')
+  async embeddingDeckCards(
+    @Param('deckId', ParseIntPipe) deckId: number,
+    @Req() req,
+  ) {
+    const userId: number = req?.user?.id;
+
+    try {
+      // 异步处理
+      const taskId = uuidv4();
+      const result = await this.ankiService.embeddingExistingDeckCards(
+        deckId,
+        userId,
+        taskId,
+      );
+
+      return {
+        ...result,
+        taskId,
+        async: true,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error.message || 'Failed to process embedding',
+        totalCards: 0,
+      };
+    }
+  }
+
+  @Post('updateDeckConfig/:deckId')
+  async updateDeckConfig(
+    @Param('deckId', ParseIntPipe) deckId: number,
+    @Body(ValidationPipe) updateDeckConfigDto: UpdateDeckConfigDto,
+    @Req() req,
+  ) {
+    const userId: number = req?.user?.id;
+
+    try {
+      const result = await this.ankiService.updateDeckConfig(
+        deckId,
+        userId,
+        updateDeckConfigDto.config,
+        updateDeckConfigDto.fsrsParameters,
+      );
+
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        message: error.message || 'Failed to update deck configuration',
+      };
+    }
   }
 }

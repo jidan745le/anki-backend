@@ -36,6 +36,9 @@ export class UserDeck {
   @Column({ type: 'json', nullable: true })
   fsrsParameters: FSRSParameters;
 
+  @Column({ type: 'json', nullable: true })
+  config: any;
+
   // 学习进度
   @Column({ default: 0 })
   lastPosition: number;

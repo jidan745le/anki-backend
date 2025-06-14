@@ -15,6 +15,20 @@ const {
   isDevelopment,
 } = workerData;
 
+// 终止标志
+let shouldTerminate = false;
+
+// 监听主线程消息
+parentPort?.on('message', (message) => {
+  if (message.type === 'terminate') {
+    shouldTerminate = true;
+    parentPort?.postMessage({
+      type: 'log',
+      message: 'Received termination signal, stopping gracefully...',
+    });
+  }
+});
+
 // 格式化时间函数
 function formatTime(seconds: number): string | null {
   if (isNaN(seconds)) {
@@ -22,6 +36,18 @@ function formatTime(seconds: number): string | null {
   }
   const date = new Date(seconds * 1000);
   return date.toISOString().substr(11, 8);
+}
+
+// 检查是否应该终止
+function checkTermination(): boolean {
+  if (shouldTerminate) {
+    parentPort?.postMessage({
+      type: 'terminated',
+      message: 'Worker terminated gracefully',
+    });
+    process.exit(0);
+  }
+  return false;
 }
 
 // 主要处理函数
@@ -110,6 +136,9 @@ async function buildVectorStore() {
     );
 
     for (let i = 0; i < splitDocs.length; i += batchSize) {
+      // 检查是否应该终止
+      checkTermination();
+
       const batchDocs = splitDocs.slice(i, i + batchSize);
       const batchNum = Math.floor(i / batchSize) + 1;
 
@@ -147,7 +176,11 @@ async function buildVectorStore() {
 
       // 在批次之间添加短暂延迟，减轻负载压力
       if (i + batchSize < splitDocs.length) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // 将3秒延迟分解为多个检查点，以便更快响应终止请求
+        for (let delay = 0; delay < 30000; delay += 500) {
+          checkTermination();
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
       }
     }
 

@@ -530,9 +530,15 @@ export class AnkiService implements OnApplicationBootstrap {
       );
     }
 
+    const userDeck = await this.userDeckService.getUserDeck(
+      userCard.user.id,
+      userCard.deck.id,
+    );
+
     const reviewResult = await this.fsrsService.updateCardWithRating(
       userCard.id,
       reviewQuality,
+      userDeck.fsrsParameters,
     );
 
     // The fsrsService.updateCardWithRating returns an object containing the updated UserCard
@@ -580,6 +586,10 @@ export class AnkiService implements OnApplicationBootstrap {
           ...omit(userDeck, 'deck'), // Spreads properties of userDeck itself (e.g., fsrsParams)
           ...userDeck.deck, // Spreads properties of the actual Deck entity
           owned: userDeck.deck.creatorId === userId,
+          status:
+            userDeck.deck.creatorId === userId
+              ? userDeck.deck.status
+              : DeckStatus.COMPLETED,
           stats, // Adds the calculated statistics
         };
       }),
@@ -591,7 +601,12 @@ export class AnkiService implements OnApplicationBootstrap {
   async deleteDeck(
     deckId: number,
     userId?: number,
-  ): Promise<{ deleted: boolean; message: string; type: 'physical' | 'soft' }> {
+  ): Promise<{
+    deleted: boolean;
+    message: string;
+    type: 'physical' | 'soft';
+    stoppedTasks?: string[];
+  }> {
     if (!userId) {
       throw new Error('User ID is required for deck deletion');
     }
@@ -620,6 +635,13 @@ export class AnkiService implements OnApplicationBootstrap {
 
     if (canPhysicallyDelete) {
       // 物理删除：创造者本人删除且没有其他人使用
+
+      // 首先停止所有相关的embedding任务
+      const stoppedTasks = await this.embeddingService.stopDeckTasks(deckId);
+      this.logger.log(
+        `Stopped ${stoppedTasks.stoppedTasks.length} embedding tasks for deck ${deckId}`,
+      );
+
       await this.deckReferenceService.physicallyDeleteDeck(deckId);
       await this.embeddingService.deleteVectorStore(deckId);
 
@@ -627,13 +649,24 @@ export class AnkiService implements OnApplicationBootstrap {
         deleted: true,
         message: 'Deck has been permanently deleted (no other users)',
         type: 'physical',
+        stoppedTasks: stoppedTasks.stoppedTasks,
       };
     } else {
       // 软删除：有其他人在使用
       const activeUserCount =
         await this.deckReferenceService.getActiveUserCount(deckId);
-      //如果是creatorid = userId，则shared = false
+
+      // 如果是创建者删除，停止相关的embedding任务
+      let stoppedTasks: string[] = [];
       if (deck.creatorId === userId) {
+        const stoppedTasksResult = await this.embeddingService.stopDeckTasks(
+          deckId,
+        );
+        stoppedTasks = stoppedTasksResult.stoppedTasks;
+        this.logger.log(
+          `Stopped ${stoppedTasks.length} embedding tasks for deck ${deckId}`,
+        );
+
         await this.deckRepository.update(deckId, { isShared: false });
       }
 
@@ -646,6 +679,7 @@ export class AnkiService implements OnApplicationBootstrap {
           activeUserCount - 1
         } other users still have access)`,
         type: 'soft',
+        stoppedTasks: stoppedTasks.length > 0 ? stoppedTasks : undefined,
       };
     }
   }
@@ -1459,41 +1493,35 @@ export class AnkiService implements OnApplicationBootstrap {
     file: Express.Multer.File,
     deckId: number,
     userId: number,
-    taskId: string,
-    useEmbedding?: boolean,
+    taskId?: string,
+    // useEmbedding?: boolean,
   ): Promise<void> {
     try {
-      this.logger.log(
-        `Starting async card processing for deck ${deckId}, task ${taskId}`,
-      );
-      if (useEmbedding) {
-        setTimeout(() => {
-          this.websocketGateway.sendTaskInit(userId, taskId);
-        }, 1000);
-      }
-      this.websocketGateway.sendTaskInit(userId, taskId);
+      // this.logger.log(
+      //   `Starting async card processing for deck ${deckId}, task ${taskId}`,
+      // );
+      // if (useEmbedding) {
+      //   setTimeout(() => {
+      //     this.websocketGateway.sendTaskInit(userId, taskId);
+      //   }, 1000);
+      // }
+      // this.websocketGateway.sendTaskInit(userId, taskId);
 
       // 第一步：解析文件
-      this.websocketGateway.sendProgress(userId, taskId, 10, '正在解析文件...');
+      // this.websocketGateway.sendProgress(userId, taskId, 10, '正在解析文件...');
       const cards = await this.parseCardsFile(file);
 
-      // 第二步：开始添加卡片
-      this.websocketGateway.sendProgress(
-        userId,
-        taskId,
-        30,
-        `已解析 ${cards.length} 张卡片，开始加入牌组...`,
-      );
+      // // 第二步：开始添加卡片
+      // this.websocketGateway.sendProgress(
+      //   userId,
+      //   taskId,
+      //   30,
+      //   `已解析 ${cards.length} 张卡片，开始加入牌组...`,
+      // );
 
       // 第三步：处理卡片和向量存储
       // 向 addCardsForUserDeckBatch 传递 taskId 使其能使用 Worker 异步处理向量存储
-      await this.addCardsForUserDeckBatch(
-        cards,
-        deckId,
-        userId,
-        taskId,
-        useEmbedding,
-      );
+      await this.addCardsForUserDeckBatch(cards, deckId, userId, taskId, false);
 
       // 第四步：处理完成 - Worker 会在向量存储完成时发送100%进度
       this.logger.log(
@@ -1571,7 +1599,7 @@ export class AnkiService implements OnApplicationBootstrap {
 
     // 批量保存用户卡片
     const savedUserCards = await this.userCardRepository.save(userCards);
-    this.refreshUserDeckCardsInRedis(userId, deckId);
+    await this.refreshUserDeckCardsInRedis(userId, deckId);
 
     // 构建向量存储，使用用户卡片内容
     const cardTexts = baseCards.map((card) => ({
@@ -1598,14 +1626,7 @@ export class AnkiService implements OnApplicationBootstrap {
             this.logger.error(`Error building vector store: ${error.message}`);
           });
       }
-    } else {
-      await this.deckRepository.update(
-        { id: deckId },
-        { status: DeckStatus.COMPLETED },
-      );
-      this.websocketGateway.sendProgress(userId, taskId, 100, '卡片插入完成');
     }
-
     return savedUserCards;
   }
 
@@ -1833,5 +1854,246 @@ export class AnkiService implements OnApplicationBootstrap {
       hasPrev: page > 1,
       deckInfo,
     };
+  }
+
+  /**
+   * 根据UUID获取指定的用户卡片
+   * @param cardUuid 卡片UUID
+   * @param userId 用户ID
+   * @param includeStats 是否包含统计信息
+   * @param includeAllCards 是否包含所有卡片摘要
+   * @returns 卡片详情及可选的统计信息
+   */
+  async getCardByUuid(
+    cardUuid: string,
+    userId: number,
+    includeStats = true,
+    includeAllCards = true,
+  ): Promise<NextCardResponse> {
+    // 查找指定UUID的用户卡片
+    const userCard = await this.userCardRepository.findOne({
+      where: {
+        uuid: cardUuid,
+        user: { id: userId },
+      },
+      relations: ['card', 'deck', 'user'],
+    });
+
+    if (!userCard) {
+      throw new NotFoundException(
+        `Card with UUID ${cardUuid} not found or you don't have access to it`,
+      );
+    }
+
+    let stats: DeckStats = { newCount: 0, learningCount: 0, reviewCount: 0 };
+    let allCards: UserCardSummary[] = [];
+
+    if (includeStats || includeAllCards) {
+      const deckId = userCard.deck.id;
+
+      if (includeStats) {
+        stats = await this.calculateDeckStats(userId, deckId);
+      }
+
+      if (includeAllCards) {
+        const cacheKey = this.getDeckStatsCacheKey(userId, deckId);
+        const cachedDataRaw = await this.redisClient.get(cacheKey);
+        allCards = cachedDataRaw ? JSON.parse(cachedDataRaw) : [];
+
+        // 如果缓存中没有数据，从数据库获取
+        if (allCards.length === 0) {
+          await this.refreshUserDeckCardsInRedis(userId, deckId);
+          const refreshedData = await this.redisClient.get(cacheKey);
+          allCards = refreshedData ? JSON.parse(refreshedData) : [];
+        }
+      }
+    }
+
+    return {
+      card: userCard,
+      stats,
+      allCards,
+    };
+  }
+
+  /**
+   * 为现有deck的所有cards进行embedding
+   * @param deckId 牌组ID
+   * @param userId 用户ID
+   * @param taskId 任务ID（可选，用于异步处理）
+   * @returns 处理结果
+   */
+  async embeddingExistingDeckCards(
+    deckId: number,
+    userId: number,
+    taskId?: string,
+  ): Promise<{ totalCards: number }> {
+    try {
+      // 验证用户是否有权限访问该deck
+      const userDeck = await this.userDeckService.getUserDeck(userId, deckId);
+      const deck = await this.deckRepository.findOne({
+        where: { id: deckId },
+        relations: ['cards'],
+      });
+
+      if (!deck) {
+        throw new NotFoundException(`Deck with ID ${deckId} not found`);
+      }
+
+      // 检查用户权限：要么是创建者，要么有用户-deck关系
+      if (!userDeck && deck.creatorId !== userId) {
+        throw new NotFoundException('You do not have access to this deck');
+      }
+
+      // 获取该deck的所有cards
+      const cards = await this.cardRepository.find({
+        where: { deck: { id: deckId } },
+      });
+
+      if (!cards || cards.length === 0) {
+        return {
+          totalCards: 0,
+        };
+      }
+
+      this.logger.log(
+        `Starting embedding for ${cards.length} cards in deck ${deckId}`,
+      );
+
+      // 如果提供了taskId，更新deck状态为处理中
+      if (taskId) {
+        await this.deckRepository.update(deckId, {
+          taskId,
+          status: DeckStatus.PROCESSING,
+        });
+      }
+
+      // 准备embedding数据
+      const cardTexts = cards.map((card) => ({
+        text: card.back,
+        front: card.front,
+      }));
+
+      // 如果提供了taskId，使用异步处理
+      if (taskId) {
+        // 发送初始化任务通知
+        this.websocketGateway.sendTaskInit(userId, taskId);
+        this.websocketGateway.sendProgress(
+          userId,
+          taskId,
+          10,
+          `开始为${cards.length}张卡片生成向量嵌入...`,
+        );
+
+        // 使用Worker模式异步处理
+        await this.embeddingService
+          .buildVectorStore(cardTexts, deckId, 20, 1000, 100, userId, taskId)
+          .catch(async (error) => {
+            this.logger.error(
+              `Error building vector store for existing deck: ${error.message}`,
+            );
+
+            // 更新deck状态为失败
+            await this.deckRepository.update(deckId, {
+              status: DeckStatus.FAILED,
+            });
+
+            this.websocketGateway.sendProgress(
+              userId,
+              taskId,
+              100,
+              `向量嵌入失败: ${error.message}`,
+            );
+          });
+
+        return {
+          totalCards: cards.length,
+        };
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error embedding existing deck cards: ${error.message}`,
+      );
+
+      if (taskId) {
+        // 更新deck状态为失败
+        await this.deckRepository.update(deckId, {
+          status: DeckStatus.FAILED,
+        });
+
+        this.websocketGateway.sendProgress(
+          userId,
+          taskId,
+          100,
+          `处理失败：${error.message}`,
+        );
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * 更新deck配置
+   * @param deckId 牌组ID
+   * @param userId 用户ID
+   * @param config deck配置
+   * @param fsrsParameters FSRS参数
+   * @returns 更新结果
+   */
+  async updateDeckConfig(
+    deckId: number,
+    userId: number,
+    config: { size: string; align: string },
+    fsrsParameters: any,
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      // 验证用户是否有权限更新该deck
+      const userDeck = await this.userDeckService.getUserDeck(userId, deckId);
+      const deck = await this.deckRepository.findOne({
+        where: { id: deckId },
+      });
+
+      if (!deck) {
+        throw new NotFoundException(`Deck with ID ${deckId} not found`);
+      }
+
+      // 检查用户权限：必须有用户-deck关系
+      if (!userDeck) {
+        throw new NotFoundException('You do not have access to this deck');
+      }
+
+      // 更新用户的deck配置和FSRS参数
+      const updatedFsrsParameters = {
+        request_retention: fsrsParameters.request_retention,
+        maximum_interval: fsrsParameters.maximum_interval,
+        w: fsrsParameters.w || userDeck.fsrsParameters?.w,
+        enable_fuzz: fsrsParameters.enable_fuzz ?? true,
+        enable_short_term: fsrsParameters.enable_short_term ?? true,
+        learning_steps: fsrsParameters.learning_steps,
+        relearning_steps: fsrsParameters.relearning_steps,
+      };
+
+      await this.userDeckService.updateUserDeckConfigAndFsrsParameters(
+        userId,
+        deckId,
+        config,
+        updatedFsrsParameters,
+      );
+
+      this.logger.log(
+        `Updated config and FSRS parameters for user ${userId}, deck ${deckId}`,
+      );
+
+      return {
+        success: true,
+        message: 'Deck configuration updated successfully',
+      };
+    } catch (error) {
+      this.logger.error(
+        `Error updating deck config for deck ${deckId}: ${error.message}`,
+      );
+      throw error;
+    }
   }
 }

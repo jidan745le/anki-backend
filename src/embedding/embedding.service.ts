@@ -26,6 +26,76 @@ export class EmbeddingService {
   ) {}
   private readonly logger = new Logger(EmbeddingService.name);
 
+  // Worker任务管理
+  private workers: Map<string, Worker> = new Map();
+  private taskDeckMap: Map<string, number> = new Map();
+
+  /**
+   * 停止特定deck的所有Worker任务
+   * @param deckId 牌组ID
+   */
+  async stopDeckTasks(deckId: number): Promise<{ stoppedTasks: string[] }> {
+    const stoppedTasks: string[] = [];
+
+    // 查找该deck相关的所有任务
+    for (const [taskId, taskDeckId] of this.taskDeckMap.entries()) {
+      if (taskDeckId === deckId) {
+        const worker = this.workers.get(taskId);
+        if (worker) {
+          try {
+            this.logger.log(
+              `Terminating worker for task ${taskId}, deck ${deckId}`,
+            );
+
+            // 优雅地终止Worker
+            await worker.terminate();
+
+            // 清理映射
+            this.workers.delete(taskId);
+            this.taskDeckMap.delete(taskId);
+
+            stoppedTasks.push(taskId);
+
+            this.logger.log(
+              `Successfully stopped task ${taskId} for deck ${deckId}`,
+            );
+          } catch (error) {
+            this.logger.error(
+              `Error stopping task ${taskId}: ${error.message}`,
+            );
+          }
+        }
+      }
+    }
+
+    return { stoppedTasks };
+  }
+
+  /**
+   * 停止特定的任务
+   * @param taskId 任务ID
+   */
+  async stopTask(taskId: string): Promise<boolean> {
+    const worker = this.workers.get(taskId);
+    if (worker) {
+      try {
+        this.logger.log(`Terminating specific task ${taskId}`);
+        await worker.terminate();
+
+        // 清理映射
+        this.workers.delete(taskId);
+        this.taskDeckMap.delete(taskId);
+
+        this.logger.log(`Successfully stopped task ${taskId}`);
+        return true;
+      } catch (error) {
+        this.logger.error(`Error stopping task ${taskId}: ${error.message}`);
+        return false;
+      }
+    }
+    return false;
+  }
+
   async buildVectorStore(
     segments: any[],
     deckId: number,
@@ -106,6 +176,10 @@ export class EmbeddingService {
         // 启动Worker异步处理
         const worker = new Worker(workerPath, { workerData });
 
+        // 注册Worker到管理器
+        this.workers.set(taskId, worker);
+        this.taskDeckMap.set(taskId, deckId);
+
         // 处理Worker事件和消息
         worker.on('message', async (message) => {
           if (message.type === 'progress') {
@@ -142,6 +216,10 @@ export class EmbeddingService {
               100,
               '向量嵌入处理完成',
             );
+
+            // 清理已完成的任务
+            this.workers.delete(taskId);
+            this.taskDeckMap.delete(taskId);
           }
         });
 
@@ -154,6 +232,10 @@ export class EmbeddingService {
             100,
             `向量处理错误: ${error.message}`,
           );
+
+          // 清理出错的任务
+          this.workers.delete(taskId);
+          this.taskDeckMap.delete(taskId);
         });
 
         worker.on('exit', (code) => {
@@ -162,6 +244,10 @@ export class EmbeddingService {
           } else {
             this.logger.log(`Worker completed successfully`);
           }
+
+          // 清理退出的任务
+          this.workers.delete(taskId);
+          this.taskDeckMap.delete(taskId);
         });
 
         // 立即返回，不等待Worker完成

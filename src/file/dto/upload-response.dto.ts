@@ -9,6 +9,7 @@ export class UploadResponseDto {
     originalName?: string;
     fileUrl?: string;
     path?: string;
+    storageType?: 'temp' | 'permanent';
   };
 
   // 自定义格式

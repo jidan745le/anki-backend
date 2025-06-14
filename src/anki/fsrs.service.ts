@@ -1,13 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
-    createEmptyCard,
-    fsrs,
-    FSRS,
-    Card as FSRSCard,
-    generatorParameters,
-    Grade,
-    State,
+  createEmptyCard,
+  fsrs,
+  FSRS,
+  Card as FSRSCard,
+  generatorParameters,
+  Grade,
+  State,
 } from 'ts-fsrs';
 import { Repository } from 'typeorm';
 import { CardState, UserCard } from './entities/user-cards.entity';
@@ -81,6 +81,7 @@ export class FSRSService {
     userCard.difficulty = emptyCard.difficulty;
     userCard.elapsedDays = emptyCard.elapsed_days;
     userCard.scheduledDays = emptyCard.scheduled_days;
+    userCard.learningSteps = emptyCard.learning_steps;
     userCard.reps = emptyCard.reps;
     userCard.lapses = emptyCard.lapses;
     userCard.state = mapFSRSStateToCardState(emptyCard.state);
@@ -93,6 +94,7 @@ export class FSRSService {
    * 从UserCard实体创建FSRS卡片对象
    */
   createFSRSCardFromUserCard(userCard: UserCard): FSRSCard {
+    console.log(userCard, 'userCard');
     return {
       due: userCard.dueDate,
       stability: userCard.stability,
@@ -103,6 +105,7 @@ export class FSRSService {
       lapses: userCard.lapses,
       state: mapCardStateToFSRSState(userCard.state),
       last_review: userCard.lastReviewDate || undefined,
+      learning_steps: userCard.learningSteps || 0,
     };
   }
 
@@ -118,6 +121,7 @@ export class FSRSService {
    * 根据用户的牌组设置创建FSRS实例
    */
   createFSRSInstance(fsrsParams?: any): FSRS {
+    console.log(fsrsParams, 'fsrsParams');
     // 使用用户自定义参数或默认参数
     const params = generatorParameters({
       request_retention: fsrsParams?.request_retention || 0.9,
@@ -128,6 +132,13 @@ export class FSRSService {
         fsrsParams?.enable_short_term !== undefined
           ? fsrsParams.enable_short_term
           : true,
+      learning_steps: fsrsParams?.learning_steps?.length
+        ? fsrsParams.learning_steps
+        : undefined,
+      relearning_steps: fsrsParams?.relearning_steps?.length
+        ? fsrsParams.relearning_steps
+        : undefined,
+      w: fsrsParams?.w?.length ? fsrsParams.w : undefined,
     });
 
     return fsrs(params);
@@ -162,6 +173,7 @@ export class FSRSService {
     userCard.difficulty = result.card.difficulty;
     userCard.elapsedDays = result.card.elapsed_days;
     userCard.scheduledDays = result.card.scheduled_days;
+    userCard.learningSteps = result.card.learning_steps;
     userCard.reps = result.card.reps;
     userCard.lapses = result.card.lapses;
     userCard.state = mapFSRSStateToCardState(result.card.state);
@@ -178,6 +190,7 @@ export class FSRSService {
       stability: result.log.stability,
       difficulty: result.log.difficulty,
       elapsed_days: result.log.elapsed_days,
+      learning_steps: result.log.learning_steps,
       last_elapsed_days: result.log.last_elapsed_days,
       scheduled_days: result.log.scheduled_days,
       review: result.log.review,
