@@ -28,8 +28,11 @@ Response Guidelines:
 4. Use casual language, occasional humor, and a warm, approachable style.
 5. If the context doesn't address the question, acknowledge this gap, offer your best insights
 6. 在回答末尾，严格按照引用映射表列出所有引用的卡片：
-   
+
    **引用卡片：**
+   [引用：卡片名称1 (ID: 确切的卡片ID)]
+   [引用：卡片名称2 (ID: 确切的卡片ID)]
+   ...
    (严格复制引用映射表中的信息)
   `;
 };

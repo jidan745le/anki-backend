@@ -2046,7 +2046,7 @@ export class AnkiService implements OnApplicationBootstrap {
   async updateDeckConfig(
     deckId: number,
     userId: number,
-    config: { size: string; align: string },
+    config: { size?: string; align?: string },
     fsrsParameters: any,
   ): Promise<{ success: boolean; message: string }> {
     try {

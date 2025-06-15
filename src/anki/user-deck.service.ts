@@ -144,7 +144,7 @@ export class UserDeckService {
   async updateUserDeckConfigAndFsrsParameters(
     userId: number,
     deckId: number,
-    config: { size: string; align: string },
+    config: { size?: string; align?: string },
     fsrsParameters: any,
   ) {
     const userDeck = await this.userDeckRepository.findOne({

@@ -472,18 +472,23 @@ export class EmbeddingService {
     try {
       const prompt = `根据query生成4个精准的搜索关键词或短语，请忽略query中的模板，html标签，引用和url等无关信息，这些关键词将用于在embedding向量数据库中检索相关信息。每个关键词应该简洁、精确，并且从不同角度覆盖用户问题的核心要素。请直接列出这些关键词，每行一个，不要有编号或其他说明。用户问题: ${query}`;
 
-      // 调用 DeepSeek R1 模型 API
+      // 调用通义千问 API
       const response = await axios.post(
-        'https://api.deepseek.com/chat/completions', // 假设你有一个 DeepSeek 服务
+        'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
         {
-          model: 'deepseek-reasoner',
-          messages: [{ role: 'user', content: prompt }],
+          model: 'qwen2.5-32b-instruct',
+          messages: [
+            { role: 'system', content: 'You are a helpful assistant.' },
+            { role: 'user', content: prompt },
+          ],
           temperature: 0.7,
         },
         {
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.configService.get('OPENAI_API_KEY')}`,
+            Authorization: `Bearer ${this.configService.get(
+              'DASHSCOPE_API_KEY',
+            )}`,
           },
         },
       );

@@ -419,7 +419,7 @@ export class AichatService {
           content: session.content,
         }),
       });
-      console.log('session.content', session.content);
+      // console.log('session.content', session.content);
 
       // 更新数据库中的assistant消息
       await this.updateAssistantMessage(
@@ -610,11 +610,11 @@ export class AichatService {
 
         globalContext = contextWithReferences;
         console.log('\n');
-        console.log(
-          'globalContext',
-          Array.from(referencedCards.values()),
-          globalContext,
-        );
+        // console.log(
+        //   'globalContext',
+        //   Array.from(referencedCards.values()),
+        //   globalContext,
+        // );
         console.log('\n');
       } else {
         content = generatePrompt(
@@ -634,7 +634,7 @@ export class AichatService {
             : content,
       };
       console.log('\n');
-      console.log('userMessage', userMessage);
+      // console.log('userMessage', userMessage);
       console.log('\n');
       let history: ChatMessage[] = [];
 
@@ -662,7 +662,7 @@ export class AichatService {
         })),
         userMessage,
       ];
-      this.logger.debug(`History: ${JSON.stringify(messages, null, 2)}`);
+      // this.logger.debug(`History: ${JSON.stringify(messages, null, 2)}`);
 
       this.logger.debug(`Calling OpenAI API with model: ${dto.model}`);
       const completion = await this.openai.chat.completions.create({

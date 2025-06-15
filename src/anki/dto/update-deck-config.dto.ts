@@ -1,26 +1,26 @@
 import { Type } from 'class-transformer';
 import {
-    IsArray,
-    IsBoolean,
-    IsIn,
-    IsNotEmpty,
-    IsNumber,
-    IsOptional,
-    IsString,
-    Max,
-    Min,
-    ValidateNested,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+  ValidateNested,
 } from 'class-validator';
 import { Steps } from 'ts-fsrs';
 
 export class DeckConfigDto {
   @IsString()
-  @IsNotEmpty()
-  size: string; // 如 "16px"
+  @IsOptional()
+  size?: string; // 如 "16px"
 
   @IsString()
+  @IsOptional()
   @IsIn(['left', 'center', 'right'])
-  align: string;
+  align?: string;
 }
 
 export class FSRSParametersDto {
