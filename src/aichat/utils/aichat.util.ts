@@ -1,8 +1,7 @@
-import { DeckType } from 'src/anki/entities/deck.entity';
 import { ChatContextType, ChatType } from '../dto/create-chat-message.dto';
 import { PromptConfig } from '../entities/chat-message.entity';
 
-export const getSystemPrompt = (deckType: DeckType) => {
+export const getSystemPrompt = (chatContext: string) => {
   return `
 You are a text explanation and question answering assistant.
 `;
@@ -19,9 +18,19 @@ ${question}
 Response Guidelines:
 1. When responding, please use a conversational, engaging tone. Base your answer primarily on the context provided.
 2. If the context doesn't fully cover the topic, feel free to supplement with your own knowledge, but make it clear when you're going beyond what was discussed in the context.
-3. In your response, briefly mention how the context informed your answer.
+3. **重要：在回答中引用卡片时，必须严格使用上面提供的引用映射表中的确切ID**。
+   - 引用格式：[引用：卡片名称 (ID: 确切的卡片ID)]
+   - 例如：[引用：JavaScript基础概念 (ID: 1234567890)]
+   - 不要擅自修改上述引用格式，记住，你只能使用引用格式：[引用：卡片名称 (ID: 确切的卡片ID)]
+   - 绝对不要自己编造或修改ID
+   - 只使用上下文中明确提供的卡片ID
+   - 最后强调，不要擅自修改上述引用格式，记住，你只能使用引用格式：[引用：卡片名称 (ID: 确切的卡片ID)]
 4. Use casual language, occasional humor, and a warm, approachable style.
 5. If the context doesn't address the question, acknowledge this gap, offer your best insights
+6. 在回答末尾，严格按照引用映射表列出所有引用的卡片：
+   
+   **引用卡片：**
+   (严格复制引用映射表中的信息)
   `;
 };
 
@@ -144,7 +153,7 @@ export const generateSimplifiedPromptDisplay = (promptConfig: PromptConfig) => {
     questionDisplay ? ` ${questionDisplay}` : ''
   }`;
 
-  // 确保首字母大写，结尾添加适当标点
+  // 确保首字母大小写，结尾添加适当标点
   simplifiedDisplay =
     simplifiedDisplay.charAt(0).toUpperCase() + simplifiedDisplay.slice(1);
   if (

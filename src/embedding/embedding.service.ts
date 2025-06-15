@@ -26,6 +26,56 @@ export class EmbeddingService {
   ) {}
   private readonly logger = new Logger(EmbeddingService.name);
 
+  async onModuleInit() {
+    try {
+      this.logger.log('正在初始化embedding状态...');
+
+      // 连接向量数据库
+      const url = !isDevelopment
+        ? 'http://vector-database:8000'
+        : 'http://127.0.0.1:8000';
+
+      const chromaClient = new ChromaClient({ path: url });
+
+      // 获取所有集合
+      const collections = await chromaClient.listCollections();
+      this.logger.log(`发现 ${collections.length} 个向量集合`);
+
+      // 解析deck集合并更新状态
+      let updatedCount = 0;
+      for (const collectionName of collections) {
+        // 匹配 deck_{id}_vectors 格式
+        const match = collectionName.match(/^deck_(\d+)_vectors$/);
+        if (match) {
+          const deckId = parseInt(match[1]);
+
+          try {
+            // 检查deck是否存在且未标记为已嵌入
+            const deck = await this.deckRepository.findOne({
+              where: { id: deckId },
+            });
+
+            if (deck && !deck.isEmbedding) {
+              await this.deckRepository.update(
+                { id: deckId },
+                { isEmbedding: true, status: DeckStatus.COMPLETED },
+              );
+              updatedCount++;
+              this.logger.log(`已更新 deck ${deckId} 的embedding状态`);
+            }
+          } catch (error) {
+            this.logger.warn(`更新 deck ${deckId} 状态失败: ${error.message}`);
+          }
+        }
+      }
+
+      this.logger.log(`embedding状态初始化完成，共更新 ${updatedCount} 个deck`);
+    } catch (error) {
+      this.logger.warn(`embedding状态初始化失败: ${error.message}`);
+      // 不抛出错误，避免影响服务启动
+    }
+  }
+
   // Worker任务管理
   private workers: Map<string, Worker> = new Map();
   private taskDeckMap: Map<string, number> = new Map();
@@ -208,8 +258,9 @@ export class EmbeddingService {
             // 更新牌组状态
             await this.deckRepository.update(
               { id: deckId },
-              { status: DeckStatus.COMPLETED },
+              { status: DeckStatus.COMPLETED, isEmbedding: true },
             );
+
             this.websocketGateway.sendProgress(
               userId,
               taskId,
@@ -220,6 +271,7 @@ export class EmbeddingService {
             // 清理已完成的任务
             this.workers.delete(taskId);
             this.taskDeckMap.delete(taskId);
+            worker.terminate();
           }
         });
 

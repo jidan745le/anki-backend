@@ -87,6 +87,9 @@ export class Deck {
   @Column({ type: 'boolean', default: false })
   isShared: boolean;
 
+  @Column({ type: 'boolean', default: false })
+  isEmbedding: boolean;
+
   @BeforeInsert()
   generateUuid() {
     if (!this.uuid) {

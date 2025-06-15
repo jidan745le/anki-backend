@@ -69,6 +69,7 @@ async function buildVectorStore() {
         speaker: segment.speaker,
         deckId: deckId,
         front: segment.front,
+        uuid: segment.uuid,
       };
 
       const filteredMetadata = Object.fromEntries(
@@ -177,7 +178,7 @@ async function buildVectorStore() {
       // 在批次之间添加短暂延迟，减轻负载压力
       if (i + batchSize < splitDocs.length) {
         // 将3秒延迟分解为多个检查点，以便更快响应终止请求
-        for (let delay = 0; delay < 30000; delay += 500) {
+        for (let delay = 0; delay < 1000; delay += 500) {
           checkTermination();
           await new Promise((resolve) => setTimeout(resolve, 500));
         }

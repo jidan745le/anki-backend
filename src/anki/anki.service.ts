@@ -568,7 +568,7 @@ export class AnkiService implements OnApplicationBootstrap {
   //获取用户所有deck pending to be implemented
   async getDecks(userId: number) {
     const userDecks = await this.userDeckService.getUserDecks(userId);
-    await this.embeddingService.vectorStoreLogger();
+    // await this.embeddingService.vectorStoreLogger();
 
     const decksWithStats = await Promise.all(
       userDecks.map(async (userDeck) => {
@@ -1972,6 +1972,8 @@ export class AnkiService implements OnApplicationBootstrap {
       const cardTexts = cards.map((card) => ({
         text: card.back,
         front: card.front,
+        id: card.id,
+        uuid: card.uuid,
       }));
 
       // 如果提供了taskId，使用异步处理

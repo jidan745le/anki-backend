@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import OpenAI from 'openai';
@@ -7,7 +7,7 @@ import { Observable, Subject } from 'rxjs';
 import { Card } from 'src/anki/entities/card.entity';
 import { UserCard } from 'src/anki/entities/user-cards.entity';
 import { EmbeddingService } from 'src/embedding/embedding.service';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import {
   ChatContextType,
@@ -96,7 +96,7 @@ export class AichatService {
     try {
       const card = await this.userCardRepository.findOne({
         where: { uuid: dto.cardId },
-        relations: ['deck'],
+        relations: ['deck', 'user'],
       });
       const cardId = card.id;
       const deckId = card.deck.id;
@@ -104,6 +104,12 @@ export class AichatService {
       let globalContext: string;
 
       if (dto.chatcontext === ChatContextType.Deck) {
+        if (!card.deck.isEmbedding) {
+          throw new HttpException(
+            'Deck is not embedding',
+            HttpStatus.BAD_REQUEST,
+          );
+        }
         content = generatePrompt(
           dto.chatcontext,
           dto.contextContent,
@@ -116,23 +122,93 @@ export class AichatService {
           dto.selectionText ? `\n\n以及其中内容${dto.selectionText}` : ''
         }${dto.question ? `\n\n以及问题${dto.question}` : ''}`;
 
+        console.log('contentForKeywords', contentForKeywords);
+
         const keywords = await this.embeddingService.generateSearchKeywords(
           contentForKeywords,
         );
+        console.log('keywords', keywords);
 
-        const globalContextSet = new Set<string>();
+        // 收集引用的卡片信息
+        const referencedCards = new Map<
+          string,
+          { front: string; back: string; uuid: string }
+        >();
+
         await Promise.all(
           keywords.map((keyword) =>
             this.embeddingService
               .searchSimilarContent(deckId, keyword)
               .then((similarContentWithScores) => {
                 similarContentWithScores.forEach((result) => {
-                  globalContextSet.add(result[0].pageContent);
+                  const doc = result[0];
+                  const front = doc.metadata?.front || '未知卡片';
+                  const back = doc.pageContent;
+                  const uuid = doc.metadata?.uuid;
+                  referencedCards.set(front, { front, back, uuid });
                 });
               }),
           ),
         );
-        globalContext = Array.from(globalContextSet).join('\n');
+        console.log('referencedCards', referencedCards);
+        //cards的uuid找出usercards的uuid
+        const userCards = await this.userCardRepository.find({
+          where: {
+            card: {
+              uuid: In(
+                Array.from(referencedCards.values()).map((card) => card.uuid),
+              ),
+            },
+            user: {
+              id: card.user.id,
+            },
+          },
+          relations: ['card', 'user'],
+        });
+        console.log('userCards', userCards);
+        const userCardsMap = new Map<string, string>();
+        userCards.forEach((userCard) => {
+          userCardsMap.set(userCard.card.uuid, userCard.uuid);
+        });
+        console.log('userCardsMap', userCardsMap);
+
+        // 构建带有引用信息的上下文
+        const contextWithReferences = Array.from(referencedCards.values())
+          .map((c) => {
+            return {
+              front: c.front,
+              uuid: userCardsMap.get(c.uuid),
+              back: c.back,
+            };
+          })
+          .filter((c) => c.uuid !== card.uuid)
+          .map((card, index) => {
+            return `引用卡片${index + 1}：「${card.front}」\n卡片ID：${
+              card.uuid
+            }\n内容：${card.back}`;
+          })
+          .join('\n\n');
+
+        console.log('contextWithReferences', contextWithReferences);
+
+        // 添加引用映射表
+        const referenceMapping = Array.from(referencedCards.values())
+          .map((c) => {
+            return {
+              front: c.front,
+              uuid: userCardsMap.get(c.uuid),
+              back: c.back,
+            };
+          })
+          .filter((c) => c.uuid !== card.uuid)
+          .map((card, index) => {
+            return `- 引用卡片${index + 1} = 「${card.front}」(ID: ${
+              card.uuid
+            })`;
+          })
+          .join('\n');
+
+        globalContext = `${contextWithReferences}\n\n=== 引用映射表 ===\n${referenceMapping}`;
       } else {
         content = generatePrompt(
           dto.chatcontext,
@@ -150,6 +226,7 @@ export class AichatService {
             ? getRetrievalUserPrompt(globalContext, content)
             : content,
       };
+      console.log('userMessage', userMessage);
 
       let history: ChatMessage[] = [];
       const whereCondition: any = { userCard: { id: cardId } };
@@ -342,6 +419,7 @@ export class AichatService {
           content: session.content,
         }),
       });
+      console.log('session.content', session.content);
 
       // 更新数据库中的assistant消息
       await this.updateAssistantMessage(
@@ -496,7 +574,12 @@ export class AichatService {
         );
         console.log('keywords', keywords);
         console.log('\n');
-        const globalContextSet = new Set<string>();
+        // 收集引用的卡片信息
+        const referencedCards = new Map<
+          string,
+          { front: string; back: string }
+        >();
+
         await Promise.all(
           keywords.map((keyword) =>
             this.embeddingService
@@ -507,16 +590,29 @@ export class AichatService {
                   similarContentWithScores,
                 );
                 similarContentWithScores.forEach((result) => {
-                  globalContextSet.add(result[0].pageContent);
+                  const doc = result[0];
+                  const front = doc.metadata?.front || '未知卡片';
+                  const back = doc.pageContent;
+                  referencedCards.set(front, { front, back });
                 });
               }),
           ),
         );
-        globalContext = Array.from(globalContextSet).join('\n');
+
+        // 构建带有引用信息的上下文
+        const contextWithReferences = Array.from(referencedCards.values())
+          .map((card, index) => {
+            return `引用卡片${index + 1}：「${card.front}」\n内容：${
+              card.back
+            }`;
+          })
+          .join('\n\n');
+
+        globalContext = contextWithReferences;
         console.log('\n');
         console.log(
           'globalContext',
-          Array.from(globalContextSet),
+          Array.from(referencedCards.values()),
           globalContext,
         );
         console.log('\n');

@@ -57,7 +57,7 @@ export class ResponseInterceptor implements NestInterceptor {
       }),
       tap(() => {
         const processingTime = Date.now() - startTime;
-        console.log('processingTime', processingTime);
+        // console.log('processingTime', processingTime);
         this.logger.log(`${method} ${url} - ${processingTime}ms`);
       }),
     );
