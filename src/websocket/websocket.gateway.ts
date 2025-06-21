@@ -35,7 +35,8 @@ export class WebsocketGateway implements OnGatewayConnection {
       );
 
       const token =
-        client.handshake.headers.authorization || client.handshake.auth.token;
+        client.handshake.headers.authorization?.split(' ')[1] ||
+        client.handshake.auth.token;
 
       if (!token) {
         throw new UnauthorizedException('No token provided');
