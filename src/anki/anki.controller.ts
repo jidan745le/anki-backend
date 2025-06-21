@@ -560,4 +560,23 @@ export class AnkiController {
       };
     }
   }
+
+  @Get('user-cards/front-and-uuid/:deckId')
+  async getUserCardsFrontAndUuid(
+    @Param('deckId', ParseIntPipe) deckId: number,
+    @Req() req,
+  ) {
+    const userId: number = req?.user?.id;
+
+    try {
+      const result = await this.ankiService.getUserCardsFrontAndUuid(
+        deckId,
+        userId,
+      );
+
+      return result;
+    } catch (error) {
+      throw error;
+    }
+  }
 }

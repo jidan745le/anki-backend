@@ -2098,4 +2098,64 @@ export class AnkiService implements OnApplicationBootstrap {
       throw error;
     }
   }
+
+  /**
+   * 根据deck ID和user ID获取所有user cards的front和uuid
+   */
+  async getUserCardsFrontAndUuid(
+    deckId: number,
+    userId: number,
+  ): Promise<{ front: string; uuid: string }[]> {
+    try {
+      // 验证deck是否存在
+      const deck = await this.deckRepository.findOne({
+        where: { id: deckId },
+      });
+
+      if (!deck) {
+        throw new NotFoundException('Deck not found');
+      }
+      console.log(deck.deckType, 'deck.deckType');
+      // 检查deck类型，只有书本格式导入的deck才可以查看目录
+      if (deck.deckType !== DeckType.BOOK) {
+        throw new Error('只有书本格式导入的deck才可以查看目录');
+      }
+
+      // 检查用户权限：要么是deck的创建者，要么有该deck的用户deck记录
+      const isCreator = deck.creatorId === userId;
+      let hasAccess = isCreator;
+
+      if (!isCreator) {
+        const userDeck = await this.userDeckService.getUserDeck(userId, deckId);
+        hasAccess = !!userDeck;
+      }
+
+      if (!hasAccess) {
+        throw new Error('You do not have permission to access this deck');
+      }
+
+      // 获取所有该用户在该deck下的user cards
+      const userCards = await this.userCardRepository.find({
+        where: {
+          deck: { id: deckId },
+          user: { id: userId },
+        },
+        select: ['front', 'uuid'],
+        order: {
+          createdAt: 'ASC', // 按创建时间升序排列
+        },
+      });
+
+      return userCards.map((card) => ({
+        front: card.front,
+        uuid: card.uuid,
+      }));
+    } catch (error) {
+      this.logger.error(
+        `Failed to get user cards front and uuid for deck ${deckId} and user ${userId}:`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
 }

@@ -20,6 +20,8 @@ const JSZip = require('jszip');
 const xml2js = require('xml2js');
 
 // HeadingTextSplitter class
+import { DeckType } from './entities/deck.entity';
+
 class HeadingTextSplitter {
   private headingLevel: string | number;
   private includePath: boolean;
@@ -1248,7 +1250,7 @@ export class EpubService {
       name: dto.name,
       description: dto.description || 'Generated from EPUB',
       creatorId: userId,
-      deckType: 'normal' as any,
+      deckType: DeckType.BOOK,
     });
 
     return await this.deckRepository.save(deck);

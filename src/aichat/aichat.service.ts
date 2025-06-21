@@ -165,7 +165,7 @@ export class AichatService {
           },
           relations: ['card', 'user'],
         });
-        console.log('userCards', userCards);
+        // console.log('userCards', userCards);
         const userCardsMap = new Map<string, string>();
         userCards.forEach((userCard) => {
           userCardsMap.set(userCard.card.uuid, userCard.uuid);

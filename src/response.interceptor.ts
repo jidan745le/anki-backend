@@ -1,6 +1,7 @@
 import {
   CallHandler,
   ExecutionContext,
+  HttpException,
   Injectable,
   Logger,
   NestInterceptor,
@@ -31,12 +32,12 @@ export class ResponseInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       catchError((err) => {
-        console.log(err, 'err');
+        console.log(err, err.getStatus, err.message, 'err111');
 
         if (err.getStatus && err.getStatus() === 200) {
           return of({ message: err.getResponse(), error: true });
         }
-        return throwError(() => err);
+        return throwError(() => new HttpException(err.message, 400));
       }),
       map((data) => {
         if (data?.message && data?.error) {
@@ -58,7 +59,7 @@ export class ResponseInterceptor implements NestInterceptor {
       tap(() => {
         const processingTime = Date.now() - startTime;
         // console.log('processingTime', processingTime);
-        // this.logger.log(`${method} ${url} - ${processingTime}ms`);
+        this.logger.log(`${method} ${url} - ${processingTime}ms`);
       }),
     );
   }

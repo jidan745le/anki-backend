@@ -19,6 +19,7 @@ import { UserDeck } from './user-deck.entity';
 export enum DeckType {
   NORMAL = 'normal',
   AUDIO = 'audio',
+  BOOK = 'book',
 }
 
 export enum DeckStatus {
