@@ -32,6 +32,7 @@ export enum ContentType {
   IMAGE = 'image',
   AUDIO = 'audio',
   VIDEO = 'video',
+  TITLE = 'title',
 }
 
 @Entity('cards')

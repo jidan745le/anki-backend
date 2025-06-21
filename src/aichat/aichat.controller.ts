@@ -10,7 +10,6 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
-import { Public } from '../decorators/public.decorator';
 import { LoginGuard } from '../login.guard';
 import { AichatService } from './aichat.service';
 import { CreateChatMessageDto } from './dto/create-chat-message.dto';
@@ -44,21 +43,15 @@ export class AichatController {
     return this.aichatService.createChatSession(createMessageDto);
   }
 
-  @Public()
+  // @Public()
   @Sse('stream/:sessionId')
-  streamChat(
-    @Param('sessionId') sessionId: string,
-    @Query('token') token: string,
-  ): Observable<any> {
+  streamChat(@Param('sessionId') sessionId: string): Observable<any> {
     return this.aichatService.getChatStream(sessionId);
   }
 
-  @Public()
+  // @Public()
   @Sse('status/:sessionId')
-  getSessionStatus(
-    @Param('sessionId') sessionId: string,
-    @Query('token') token: string,
-  ): Observable<any> {
+  getSessionStatus(@Param('sessionId') sessionId: string): Observable<any> {
     return this.aichatService.getSessionStatus(sessionId);
   }
 }

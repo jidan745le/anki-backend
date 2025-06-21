@@ -32,9 +32,12 @@ export class WebsocketGateway implements OnGatewayConnection {
     try {
       Logger.debug(`Connection attempt - Client ID: ${client.id}`);
       Logger.debug(`Handshake details: ${JSON.stringify(client.handshake)}`);
+      Logger.debug(
+        `Client handshake auth: ${client.handshake.headers.authorization}`,
+      );
 
       const token =
-        client.handshake.auth.token || client.handshake.headers.authorization;
+        client.handshake.headers.authorization || client.handshake.auth.token;
 
       if (!token) {
         throw new UnauthorizedException('No token provided');

@@ -990,188 +990,36 @@ export class EpubService {
     chunkIndex: number,
     totalChunks: number,
   ): Promise<string> {
-    // 处理章节标题的 markdown
-    const processedChapterTitle = await this.convertMarkdownToHtml(
-      chapter.title,
-    );
+    // 构建结构化的文本格式，使用 | 作为主分隔符，> 作为路径分隔符
+    const parts = [];
 
-    // 处理小节标题的 markdown
-    const processedSectionTitle = sectionMetadata.title
-      ? await this.convertMarkdownToHtml(sectionMetadata.title)
-      : '';
+    // 章节标题
+    parts.push(`CHAPTER:${chapter.title}`);
 
-    // 处理路径中每个元素的 markdown
-    const processedPath =
-      sectionMetadata.path && sectionMetadata.path.length > 0
-        ? await Promise.all(
-            sectionMetadata.path.map((pathItem) =>
-              this.convertMarkdownToHtml(pathItem),
-            ),
-          )
-        : [];
-
-    // 生成面包屑导航
-    const breadcrumbHtml = this.generateBreadcrumbHtml(processedPath);
-
-    // 生成进度条
-    const progressHtml = this.generateProgressHtml(chunkIndex, totalChunks);
-
-    // 生成简洁的 HTML 结构
-    const html = `
-      <div class="card-front-container">
-        <!-- 章节标题 -->
-        <div class="chapter-title">
-          ${processedChapterTitle}
-        </div>
-        
-        ${
-          sectionMetadata.title &&
-          sectionMetadata.title !== 'Introduction' &&
-          sectionMetadata.title !== 'Document'
-            ? `
-        <!-- 小节标题 -->
-        <div class="section-title">
-          ${processedSectionTitle}
-        </div>
-        `
-            : ''
-        }
-        
-        ${
-          breadcrumbHtml
-            ? `
-        <!-- 面包屑导航 -->
-        <div class="breadcrumb-container">
-          ${breadcrumbHtml}
-        </div>
-        `
-            : ''
-        }
-        
-        <!-- 分段进度 -->
-        <div class="progress-container">
-          ${progressHtml}
-        </div>
-      </div>
-
-      <style>
-        .card-front-container {
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-          padding: 12px;
-          background: #f8f9fa;
-          border: 1px solid #e9ecef;
-          border-radius: 6px;
-          color: #333;
-          font-size: 0.85em;
-          line-height: 1.4;
-        }
-        
-        .chapter-title {
-          font-size: 1em;
-          font-weight: 600;
-          color: #2c3e50;
-          margin-bottom: 8px;
-        }
-        
-        .section-title {
-          font-size: 0.9em;
-          font-weight: 500;
-          color: #5a6c7d;
-          margin-bottom: 8px;
-        }
-        
-        .breadcrumb-container {
-          margin-bottom: 10px;
-        }
-        
-        .breadcrumb {
-          display: flex;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 4px;
-          font-size: 0.75em;
-          color: #6c757d;
-        }
-        
-        .breadcrumb-item {
-          background: #e9ecef;
-          padding: 2px 6px;
-          border-radius: 3px;
-          font-weight: 500;
-        }
-        
-        .breadcrumb-separator {
-          color: #adb5bd;
-          margin: 0 2px;
-        }
-        
-        .progress-container {
-          border-top: 1px solid #e9ecef;
-          padding-top: 8px;
-        }
-        
-        .progress-info {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 4px;
-          font-size: 0.75em;
-          color: #6c757d;
-        }
-        
-        .progress-bar {
-          width: 100%;
-          height: 3px;
-          background: #e9ecef;
-          border-radius: 2px;
-          overflow: hidden;
-        }
-        
-        .progress-fill {
-          height: 100%;
-          background: #007bff;
-          border-radius: 2px;
-          transition: width 0.2s ease;
-        }
-      </style>
-    `;
-
-    return html;
-  }
-
-  private generateBreadcrumbHtml(processedPath: string[]): string {
-    if (!processedPath || processedPath.length === 0) {
-      return '';
+    // 小节标题（如果有且不是默认值）
+    if (
+      sectionMetadata.title &&
+      sectionMetadata.title !== 'Introduction' &&
+      sectionMetadata.title !== 'Document'
+    ) {
+      parts.push(`SECTION:${sectionMetadata.title}`);
     }
 
-    const breadcrumbItems = processedPath
-      .map((pathItem, index) => {
-        const isLast = index === processedPath.length - 1;
-        return `
-          <span class="breadcrumb-item">${pathItem}</span>
-          ${!isLast ? '<span class="breadcrumb-separator">/</span>' : ''}
-        `;
-      })
-      .join('');
+    // 面包屑路径（如果有）
+    if (sectionMetadata.path && sectionMetadata.path.length > 0) {
+      const breadcrumbPath = sectionMetadata.path.join(' > ');
+      parts.push(`BREADCRUMB:${breadcrumbPath}`);
+    }
 
-    return `<div class="breadcrumb">${breadcrumbItems}</div>`;
-  }
-
-  private generateProgressHtml(
-    chunkIndex: number,
-    totalChunks: number,
-  ): string {
+    // 进度信息
     const percentage = Math.round((chunkIndex / totalChunks) * 100);
+    parts.push(`PROGRESS:${chunkIndex}/${totalChunks} (${percentage}%)`);
 
-    return `
-      <div class="progress-info">
-        <span class="progress-text">${chunkIndex}/${totalChunks}</span>
-        <span class="progress-percentage">${percentage}%</span>
-      </div>
-      <div class="progress-bar">
-        <div class="progress-fill" style="width: ${percentage}%"></div>
-      </div>
-    `;
+    // 层级信息
+    parts.push(`LEVEL:${sectionMetadata.level}`);
+
+    // 使用 | 连接所有部分
+    return parts.join('|');
   }
 
   private async convertMarkdownToHtml(markdown: string): Promise<string> {
@@ -1421,7 +1269,7 @@ export class EpubService {
         front: chunk.front,
         back: chunk.back,
         deck,
-        frontType: ContentType.TEXT,
+        frontType: ContentType.TITLE,
       });
 
       cards.push(card);
