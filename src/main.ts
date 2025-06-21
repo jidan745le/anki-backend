@@ -22,6 +22,30 @@ async function bootstrap() {
   }
 
   const app = await NestFactory.create(AppModule);
+
+  // 配置 CORS 跨域
+  app.enableCors({
+    origin: [
+      /^https:\/\/.*\.myanki\.com$/, // 允许所有 *.myanki.com 子域名
+      'https://myanki.com', // 允许主域名
+      'http://localhost:3000', // 开发环境
+      'http://localhost:3001', // 开发环境
+      'http://127.0.0.1:3000', // 开发环境
+      'http://127.0.0.1:3001', // 开发环境
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'Accept',
+      'Origin',
+      'Cache-Control',
+      'X-File-Name',
+    ],
+    credentials: true, // 允许发送 cookies
+    optionsSuccessStatus: 200, // 某些旧版浏览器对 204 的处理有问题
+  });
   const config = new DocumentBuilder()
     .setTitle('Test example')
     .setDescription('The API description')
