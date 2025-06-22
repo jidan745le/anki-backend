@@ -1,5 +1,5 @@
 import { PartialType } from '@nestjs/mapped-types';
-import { IsInt, IsString } from 'class-validator';
+import { IsInt, IsOptional, IsString } from 'class-validator';
 import { Grade } from 'ts-fsrs';
 import { CreateAnkiDto } from './create-anki.dto';
 export class UpdateAnkiDto extends PartialType(CreateAnkiDto) {
@@ -11,8 +11,13 @@ export class UpdateUserCardDto {
   @IsString()
   id: string;
 
+  @IsOptional()
   @IsString()
-  custom_back: string;
+  custom_back?: string;
+
+  @IsOptional()
+  @IsString()
+  tags?: string;
 }
 
 export class UpdateCardWithFSRSDto {

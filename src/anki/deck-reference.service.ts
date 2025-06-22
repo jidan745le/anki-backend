@@ -17,7 +17,7 @@ export class DeckReferenceService {
 
   /**
    * 检查deck是否可以物理删除
-   * 只有当创造者删除且没有其他人使用时才能物理删除
+   * 当referenceCount只有1个时就可以物理删除
    * @param deckId 牌组ID
    * @param userId 当前操作用户ID
    */
@@ -32,26 +32,15 @@ export class DeckReferenceService {
       return false;
     }
 
-    // 检查是否是创造者
-    if (deck.creatorId !== userId) {
-      this.logger.warn(`User ${userId} is not the creator of deck ${deckId}`);
-      return false;
-    }
-
-    // 获取当前活跃的用户数量（实时查询）
-    // 临时解决方案：不使用withDeleted，直接查询所有记录
-    const activeUserCount = await this.userDeckRepository.count({
-      where: {
-        deck: { id: deckId },
-      },
-    });
+    // 检查referenceCount是否为1
+    const referenceCount = deck.referenceCount || 0;
 
     this.logger.log(
-      `Deck ${deckId} has ${activeUserCount} active users. Creator: ${userId}`,
+      `Deck ${deckId} has ${referenceCount} references. User: ${userId}`,
     );
 
-    // 如果只有创造者一个人在使用，可以物理删除
-    const canDelete = activeUserCount <= 1;
+    // 如果引用计数为1，可以物理删除
+    const canDelete = referenceCount <= 1;
     this.logger.log(`Can physically delete deck ${deckId}: ${canDelete}`);
 
     return canDelete;

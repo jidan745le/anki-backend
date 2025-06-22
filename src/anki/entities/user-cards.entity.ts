@@ -1,4 +1,3 @@
-import { ChatMessage } from 'src/aichat/entities/chat-message.entity';
 import {
   BeforeInsert,
   Column,
@@ -12,6 +11,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
+import { ChatMessage } from '../../aichat/entities/chat-message.entity';
 import { User } from '../../user/entities/user.entity';
 import { Card } from './card.entity';
 import { Deck } from './deck.entity';
@@ -22,6 +22,7 @@ export enum CardState {
   LEARNING = 1, // 学习中
   REVIEW = 2, // 复习中
   RELEARNING = 3, // 重新学习
+  SUSPENDED = 4, // 暂停学习
 }
 
 @Entity('user_cards')
@@ -58,6 +59,10 @@ export class UserCard {
   // 自定义卡片内容
   @Column({ type: 'text', nullable: true })
   customBack: string;
+
+  // 用户自定义标签
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  tags: string;
 
   // FSRS 调度参数
   @Column({ type: 'datetime' })
@@ -96,6 +101,13 @@ export class UserCard {
 
   @Column({ type: 'datetime', nullable: true })
   lastReviewDate: Date;
+
+  // 暂停相关字段
+  @Column({ type: 'tinyint', nullable: true })
+  previousState: number; // 保存暂停前的状态，用于恢复
+
+  @Column({ type: 'datetime', nullable: true })
+  suspendedAt: Date; // 暂停时间
 
   // 时间戳
   @CreateDateColumn()

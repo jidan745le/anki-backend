@@ -98,9 +98,9 @@ export class UserDeckService {
     // 软删除用户-牌组关系
     await this.userDeckRepository.softDelete(userDeck.id);
 
-    // 软删除用户的相关UserCard记录
+    // 硬删除用户的相关UserCard记录
     await this.userDeckRepository.query(
-      'UPDATE user_cards SET deletedAt = NOW() WHERE user_id = ? AND deck_id = ?',
+      'DELETE FROM user_cards WHERE user_id = ? AND deck_id = ?',
       [userId, deckId],
     );
 

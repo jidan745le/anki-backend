@@ -30,6 +30,10 @@ import {
   CreatePodcastDeckDto,
   PodcastType,
 } from './dto/create-podcast-deck.dto';
+import {
+  QueryUserCardsDto,
+  QueryUserCardsResult,
+} from './dto/query-user-cards.dto';
 import { SplitAudioDto } from './dto/split-audio.dto';
 import { UpdateUserCardDto } from './dto/update-anki.dto';
 import { Card, ContentType } from './entities/card.entity';
@@ -184,7 +188,7 @@ export class AnkiService implements OnApplicationBootstrap {
   async getRandomCard(deckId: number, userId: number) {
     const now = new Date();
 
-    // 70%的概率获取新卡片
+    // 70%的概率获取新卡片（排除暂停的）
     if (Math.random() < 0.7) {
       const newCard = await this.userCardRepository
         .createQueryBuilder('userCard')
@@ -200,7 +204,7 @@ export class AnkiService implements OnApplicationBootstrap {
       }
     }
 
-    //  30%的概率或没有新卡片时返回学习中的卡片
+    //  30%的概率或没有新卡片时返回学习中的卡片（排除暂停的）
     const learningCard = await this.userCardRepository
       .createQueryBuilder('userCard')
       .where('userCard.deck_id = :deckId', { deckId })
@@ -217,7 +221,7 @@ export class AnkiService implements OnApplicationBootstrap {
       return learningCard;
     }
 
-    // 没有学习中的卡片，随机获取一张需要复习的卡片
+    // 没有学习中的卡片，随机获取一张需要复习的卡片（排除暂停的）
     const reviewCard = await this.userCardRepository
       .createQueryBuilder('userCard')
       .where('userCard.deck_id = :deckId', { deckId })
@@ -232,7 +236,7 @@ export class AnkiService implements OnApplicationBootstrap {
       return reviewCard;
     }
 
-    // 如果没有可复习的卡片，返回任何新卡片
+    // 如果没有可复习的卡片，返回任何新卡片（排除暂停的）
     const fallbackNewCard = await this.userCardRepository
       .createQueryBuilder('userCard')
       .innerJoinAndSelect('userCard.card', 'card')
@@ -250,6 +254,9 @@ export class AnkiService implements OnApplicationBootstrap {
         .createQueryBuilder('userCard')
         .where('userCard.deck_id = :deckId', { deckId })
         .andWhere('userCard.user_id = :userId', { userId })
+        .andWhere('userCard.state != :suspendedState', {
+          suspendedState: CardState.SUSPENDED,
+        })
         .getCount();
 
       if (hasCards === 0) {
@@ -383,6 +390,12 @@ export class AnkiService implements OnApplicationBootstrap {
 
     for (const summary of summaries) {
       const dueDate = new Date(summary.dueDate); // 确保dueDate是Date对象
+
+      // 排除暂停的卡片
+      if (summary.state === CardState.SUSPENDED) {
+        continue;
+      }
+
       if (summary.state === CardState.NEW) {
         newCount++;
       } else if (
@@ -438,7 +451,7 @@ export class AnkiService implements OnApplicationBootstrap {
   private async getSequentialCard(deckId: number, userId: number) {
     const now = new Date();
 
-    // 50%概率按顺序取新卡片
+    // 50%概率按顺序取新卡片（排除暂停的）
     if (Math.random() < 0.5) {
       const newCard = await this.userCardRepository
         .createQueryBuilder('userCard')
@@ -456,7 +469,7 @@ export class AnkiService implements OnApplicationBootstrap {
 
     // 没有新卡片或随机落入另外50%概率，按照以下逻辑获取卡片
 
-    // 1. 先查找过期时间最久的学习/重学卡片
+    // 1. 先查找过期时间最久的学习/重学卡片（排除暂停的）
     const learningCard = await this.userCardRepository
       .createQueryBuilder('userCard')
       .where('userCard.deck_id = :deckId', { deckId })
@@ -473,7 +486,7 @@ export class AnkiService implements OnApplicationBootstrap {
       return learningCard;
     }
 
-    // 2. 没有学习/重学卡片，再查找过期时间最久的复习卡片
+    // 2. 没有学习/重学卡片，再查找过期时间最久的复习卡片（排除暂停的）
     const reviewCard = await this.userCardRepository
       .createQueryBuilder('userCard')
       .where('userCard.deck_id = :deckId', { deckId })
@@ -488,7 +501,7 @@ export class AnkiService implements OnApplicationBootstrap {
       return reviewCard;
     }
 
-    // 3. 最后，如果没有可学习或复习的卡片，获取按ID排序的新卡片
+    // 3. 最后，如果没有可学习或复习的卡片，获取按ID排序的新卡片（排除暂停的）
     const fallbackNewCard = await this.userCardRepository
       .createQueryBuilder('userCard')
       .where('userCard.deck_id = :deckId', { deckId })
@@ -505,6 +518,9 @@ export class AnkiService implements OnApplicationBootstrap {
         .createQueryBuilder('userCard')
         .where('userCard.deck_id = :deckId', { deckId })
         .andWhere('userCard.user_id = :userId', { userId })
+        .andWhere('userCard.state != :suspendedState', {
+          suspendedState: CardState.SUSPENDED,
+        })
         .getCount();
 
       if (hasCards === 0) {
@@ -634,13 +650,14 @@ export class AnkiService implements OnApplicationBootstrap {
     );
 
     if (canPhysicallyDelete) {
-      // 物理删除：创造者本人删除且没有其他人使用
-
-      // 首先停止所有相关的embedding任务
-      const stoppedTasks = await this.embeddingService.stopDeckTasks(deckId);
-      this.logger.log(
-        `Stopped ${stoppedTasks.stoppedTasks.length} embedding tasks for deck ${deckId}`,
-      );
+      // 物理删除：referenceCount为1
+      if (deck.creatorId === userId) {
+        // 首先停止所有相关的embedding任务
+        const stoppedTasks = await this.embeddingService.stopDeckTasks(deckId);
+        this.logger.log(
+          `Stopped ${stoppedTasks.stoppedTasks.length} embedding tasks for deck ${deckId}`,
+        );
+      }
 
       await this.deckReferenceService.physicallyDeleteDeck(deckId);
       await this.embeddingService.deleteVectorStore(deckId);
@@ -649,7 +666,6 @@ export class AnkiService implements OnApplicationBootstrap {
         deleted: true,
         message: 'Deck has been permanently deleted (no other users)',
         type: 'physical',
-        stoppedTasks: stoppedTasks.stoppedTasks,
       };
     } else {
       // 软删除：有其他人在使用
@@ -700,10 +716,28 @@ export class AnkiService implements OnApplicationBootstrap {
     }
 
     // 更新卡片的属性
-    Object.assign(card, { customBack: updateUserCardDto.custom_back });
+    const updateData: Partial<UserCard> = {};
+
+    if (updateUserCardDto.custom_back !== undefined) {
+      updateData.customBack = updateUserCardDto.custom_back;
+    }
+
+    if (updateUserCardDto.tags !== undefined) {
+      updateData.tags = updateUserCardDto.tags;
+    }
+
+    Object.assign(card, updateData);
 
     // 保存更改
-    return await this.userCardRepository.save(card);
+    const updatedCard = await this.userCardRepository.save(card);
+
+    this.logger.log(
+      `Updated user card ${
+        updateUserCardDto.id
+      } with customBack: ${!!updateUserCardDto.custom_back}, tags: ${!!updateUserCardDto.tags}`,
+    );
+
+    return updatedCard;
   }
 
   //创建deck ~~~~~~~~
@@ -1828,6 +1862,10 @@ export class AnkiService implements OnApplicationBootstrap {
 
     const totalPages = Math.ceil(total / limit);
 
+    const myDeck = await this.userDeckService.getUserDeck(userId, deckId);
+
+    const duplicated = myDeck ? true : false;
+
     // 构建 deck 信息对象
     const deckInfo = {
       id: deck.id,
@@ -1842,6 +1880,7 @@ export class AnkiService implements OnApplicationBootstrap {
         username: deck.creator?.username || 'Unknown',
       },
       totalCards: total,
+      duplicated,
     };
 
     return {
@@ -2158,4 +2197,345 @@ export class AnkiService implements OnApplicationBootstrap {
       throw error;
     }
   }
+
+  /**
+   * 暂停/恢复学习卡片
+   * @param cardUuid 卡片UUID
+   * @param userId 用户ID
+   * @param isSuspended 是否暂停
+   */
+  async suspendCard(
+    cardUuid: string,
+    userId: number,
+    isSuspended = true,
+  ): Promise<UserCard> {
+    const userCard = await this.userCardRepository.findOne({
+      where: { uuid: cardUuid, user: { id: userId } },
+      relations: ['deck'],
+    });
+
+    if (!userCard) {
+      throw new NotFoundException(`Card with UUID ${cardUuid} not found`);
+    }
+
+    if (isSuspended) {
+      // 暂停卡片
+      userCard.previousState = userCard.state; // 保存当前状态
+      userCard.state = CardState.SUSPENDED;
+      userCard.suspendedAt = new Date();
+    } else {
+      // 恢复卡片
+      if (
+        userCard.previousState !== null &&
+        userCard.previousState !== undefined
+      ) {
+        userCard.state = userCard.previousState; // 恢复到之前的状态
+      } else {
+        // 如果没有保存之前的状态，默认恢复为NEW
+        userCard.state = CardState.NEW;
+      }
+      userCard.previousState = null;
+      userCard.suspendedAt = null;
+    }
+
+    const savedCard = await this.userCardRepository.save(userCard);
+
+    // 更新Redis缓存
+    await this.updateUserCardInRedis(userId, userCard.deck.id, {
+      uuid: savedCard.uuid,
+      state: savedCard.state,
+      dueDate: savedCard.dueDate,
+      lastReviewDate: savedCard.lastReviewDate,
+    });
+
+    this.logger.log(
+      `Card ${cardUuid} ${
+        isSuspended ? 'suspended' : 'resumed'
+      } for user ${userId}`,
+    );
+
+    return savedCard;
+  }
+
+  /**
+   * 批量暂停/恢复卡片
+   */
+  async batchSuspendCards(
+    cardUuids: string[],
+    userId: number,
+    isSuspended: boolean,
+  ): Promise<{ success: number; failed: number; errors: string[] }> {
+    let success = 0;
+    let failed = 0;
+    const errors: string[] = [];
+
+    for (const uuid of cardUuids) {
+      try {
+        await this.suspendCard(uuid, userId, isSuspended);
+        success++;
+      } catch (error) {
+        this.logger.error(
+          `Failed to ${isSuspended ? 'suspend' : 'resume'} card ${uuid}:`,
+          error,
+        );
+        failed++;
+        errors.push(`${uuid}: ${error.message}`);
+      }
+    }
+
+    return { success, failed, errors };
+  }
+
+  /**
+   * 查询用户卡片（支持分页和多种筛选条件）
+   */
+  async queryUserCards(
+    userId: number,
+    queryDto: QueryUserCardsDto,
+  ): Promise<QueryUserCardsResult> {
+    try {
+      const {
+        page = 1,
+        limit = 20,
+        sortBy = 'createdAt',
+        sortOrder = 'ASC',
+        deckId,
+        front,
+        back,
+        tags,
+        state,
+        dueDateFrom,
+        dueDateTo,
+        lastReviewDateFrom,
+        lastReviewDateTo,
+        repsMin,
+        repsMax,
+        lapsesMin,
+        lapsesMax,
+        difficultyMin,
+        difficultyMax,
+        stabilityMin,
+        stabilityMax,
+        isSuspended,
+        isOverdue,
+        deckName,
+        deckType,
+      } = queryDto;
+
+      // 构建查询条件
+      const queryBuilder = this.userCardRepository
+        .createQueryBuilder('userCard')
+        .leftJoinAndSelect('userCard.deck', 'deck')
+        .leftJoinAndSelect('userCard.card', 'card')
+        .where('userCard.user = :userId', { userId });
+
+      // 牌组过滤
+      if (deckId) {
+        queryBuilder.andWhere('deck.id = :deckId', { deckId });
+      }
+
+      // 牌组名称模糊查询
+      if (deckName) {
+        queryBuilder.andWhere('deck.name LIKE :deckName', {
+          deckName: `%${deckName}%`,
+        });
+      }
+
+      // 牌组类型过滤
+      if (deckType) {
+        queryBuilder.andWhere('deck.deckType = :deckType', { deckType });
+      }
+
+      // 前面内容模糊查询
+      if (front) {
+        queryBuilder.andWhere('userCard.front LIKE :front', {
+          front: `%${front}%`,
+        });
+      }
+
+      // 后面内容模糊查询（同时查询card.back和customBack）
+      if (back) {
+        queryBuilder.andWhere(
+          '(card.back LIKE :back OR userCard.customBack LIKE :back)',
+          { back: `%${back}%` },
+        );
+      }
+
+      // 标签模糊查询（同时搜索card.tags和userCard.tags）
+      if (tags) {
+        queryBuilder.andWhere(
+          '(card.tags LIKE :tags OR userCard.tags LIKE :tags)',
+          { tags: `%${tags}%` },
+        );
+      }
+
+      // 卡片状态过滤
+      if (state !== undefined) {
+        queryBuilder.andWhere('userCard.state = :state', { state });
+      }
+
+      // 暂停状态过滤
+      if (isSuspended !== undefined) {
+        if (isSuspended) {
+          queryBuilder.andWhere('userCard.state = :suspendedState', {
+            suspendedState: 4, // CardState.SUSPENDED
+          });
+        } else {
+          queryBuilder.andWhere('userCard.state != :suspendedState', {
+            suspendedState: 4,
+          });
+        }
+      }
+
+      // 过期状态过滤
+      if (isOverdue !== undefined) {
+        const now = new Date();
+        if (isOverdue) {
+          queryBuilder.andWhere('userCard.dueDate < :now', { now });
+        } else {
+          queryBuilder.andWhere('userCard.dueDate >= :now', { now });
+        }
+      }
+
+      // 到期日期范围
+      if (dueDateFrom) {
+        queryBuilder.andWhere('userCard.dueDate >= :dueDateFrom', {
+          dueDateFrom: new Date(dueDateFrom),
+        });
+      }
+      if (dueDateTo) {
+        queryBuilder.andWhere('userCard.dueDate <= :dueDateTo', {
+          dueDateTo: new Date(dueDateTo),
+        });
+      }
+
+      // 最后复习日期范围
+      if (lastReviewDateFrom) {
+        queryBuilder.andWhere(
+          'userCard.lastReviewDate >= :lastReviewDateFrom',
+          {
+            lastReviewDateFrom: new Date(lastReviewDateFrom),
+          },
+        );
+      }
+      if (lastReviewDateTo) {
+        queryBuilder.andWhere('userCard.lastReviewDate <= :lastReviewDateTo', {
+          lastReviewDateTo: new Date(lastReviewDateTo),
+        });
+      }
+
+      // 复习次数范围
+      if (repsMin !== undefined) {
+        queryBuilder.andWhere('userCard.reps >= :repsMin', { repsMin });
+      }
+      if (repsMax !== undefined) {
+        queryBuilder.andWhere('userCard.reps <= :repsMax', { repsMax });
+      }
+
+      // 失误次数范围
+      if (lapsesMin !== undefined) {
+        queryBuilder.andWhere('userCard.lapses >= :lapsesMin', { lapsesMin });
+      }
+      if (lapsesMax !== undefined) {
+        queryBuilder.andWhere('userCard.lapses <= :lapsesMax', { lapsesMax });
+      }
+
+      // 难度范围
+      if (difficultyMin !== undefined) {
+        queryBuilder.andWhere('userCard.difficulty >= :difficultyMin', {
+          difficultyMin,
+        });
+      }
+      if (difficultyMax !== undefined) {
+        queryBuilder.andWhere('userCard.difficulty <= :difficultyMax', {
+          difficultyMax,
+        });
+      }
+
+      // 稳定性范围
+      if (stabilityMin !== undefined) {
+        queryBuilder.andWhere('userCard.stability >= :stabilityMin', {
+          stabilityMin,
+        });
+      }
+      if (stabilityMax !== undefined) {
+        queryBuilder.andWhere('userCard.stability <= :stabilityMax', {
+          stabilityMax,
+        });
+      }
+
+      // 排序
+      const orderDirection = sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+      queryBuilder.orderBy(`userCard.${sortBy}`, orderDirection);
+
+      // 分页
+      const offset = (page - 1) * limit;
+      queryBuilder.skip(offset).take(limit);
+
+      // 执行查询
+      const [userCards, total] = await queryBuilder.getManyAndCount();
+
+      // 构建返回数据
+      const data = userCards.map((userCard) => ({
+        id: userCard.id,
+        uuid: userCard.uuid,
+        front: userCard.front,
+        customBack: userCard.customBack,
+        back: userCard.card?.back,
+        tags: userCard.tags || userCard.card?.tags, // 优先使用用户自定义tags
+        userTags: userCard.tags, // 用户自定义tags
+        originalTags: userCard.card?.tags, // 原始卡片tags
+        dueDate: userCard.dueDate,
+        stability: userCard.stability,
+        difficulty: userCard.difficulty,
+        elapsedDays: userCard.elapsedDays,
+        scheduledDays: userCard.scheduledDays,
+        learningSteps: userCard.learningSteps,
+        reps: userCard.reps,
+        lapses: userCard.lapses,
+        state: userCard.state,
+        lastReviewDate: userCard.lastReviewDate,
+        previousState: userCard.previousState,
+        suspendedAt: userCard.suspendedAt,
+        createdAt: userCard.createdAt,
+        updatedAt: userCard.updatedAt,
+        deck: {
+          id: userCard.deck.id,
+          name: userCard.deck.name,
+          description: userCard.deck.description,
+          deckType: userCard.deck.deckType,
+          isShared: userCard.deck.isShared,
+        },
+        card: userCard.card
+          ? {
+              id: userCard.card.id,
+              uuid: userCard.card.uuid,
+              back: userCard.card.back,
+              tags: userCard.card.tags,
+              frontType: userCard.card.frontType,
+            }
+          : undefined,
+      }));
+
+      const totalPages = Math.ceil(total / limit);
+
+      return {
+        data,
+        total,
+        page,
+        limit,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to query user cards for user ${userId}:`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
+
+  //
 }

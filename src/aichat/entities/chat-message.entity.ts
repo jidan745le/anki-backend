@@ -1,16 +1,16 @@
-import { UserCard } from 'src/anki/entities/user-cards.entity';
 import {
-  BeforeInsert,
-  Column,
-  CreateDateColumn,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  PrimaryGeneratedColumn,
-  UpdateDateColumn,
+    BeforeInsert,
+    Column,
+    CreateDateColumn,
+    Entity,
+    Index,
+    JoinColumn,
+    ManyToOne,
+    PrimaryGeneratedColumn,
+    UpdateDateColumn,
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
+import { UserCard } from '../../anki/entities/user-cards.entity';
 import { ChatContextType, ChatType } from '../dto/create-chat-message.dto';
 
 export enum MessageRole {

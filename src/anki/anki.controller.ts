@@ -18,6 +18,7 @@ import { AnkiService, LearnOrder } from './anki.service';
 import { CreateAnkiDto } from './dto/create-anki.dto';
 import { CreateDeckDto } from './dto/create-deck.dto';
 import { ProcessSelectedTemplatesDto } from './dto/process-selected-templates.dto';
+import { QueryUserCardsDto } from './dto/query-user-cards.dto';
 import { SplitAudioDto } from './dto/split-audio.dto';
 import {
   UpdateCardWithFSRSDto,
@@ -574,6 +575,84 @@ export class AnkiController {
         userId,
       );
 
+      return result;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  @Post('cards/suspend/:cardUuid')
+  async suspendCard(
+    @Param('cardUuid') cardUuid: string,
+    @Body() dto: { isSuspended?: boolean },
+    @Req() req,
+  ): Promise<{ success: boolean; card: any; message: string }> {
+    try {
+      const userId: number = req?.user?.id;
+      const isSuspended =
+        dto.isSuspended !== undefined ? dto.isSuspended : true;
+
+      const card = await this.ankiService.suspendCard(
+        cardUuid,
+        userId,
+        isSuspended,
+      );
+
+      return {
+        success: true,
+        card,
+        message: isSuspended
+          ? 'Card suspended successfully'
+          : 'Card resumed successfully',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        card: null,
+        message: error.message || 'Failed to suspend/resume card',
+      };
+    }
+  }
+
+  @Post('cards/batch-suspend')
+  async batchSuspendCards(
+    @Body(ValidationPipe) dto: { cardUuids: string[]; isSuspended: boolean },
+    @Req() req,
+  ): Promise<{
+    success: number;
+    failed: number;
+    errors: string[];
+    message: string;
+  }> {
+    try {
+      const userId: number = req?.user?.id;
+      const result = await this.ankiService.batchSuspendCards(
+        dto.cardUuids,
+        userId,
+        dto.isSuspended,
+      );
+
+      return {
+        ...result,
+        message: `${result.success} cards ${
+          dto.isSuspended ? 'suspended' : 'resumed'
+        } successfully`,
+      };
+    } catch (error) {
+      return {
+        success: 0,
+        failed: dto.cardUuids.length,
+        errors: [error.message],
+        message: 'Batch operation failed',
+      };
+    }
+  }
+
+  @Get('user-cards/query')
+  async queryUserCards(@Query() queryDto: QueryUserCardsDto, @Req() req) {
+    try {
+      const userId: number = req?.user?.id;
+      const result = await this.ankiService.queryUserCards(userId, queryDto);
       return result;
     } catch (error) {
       throw error;
