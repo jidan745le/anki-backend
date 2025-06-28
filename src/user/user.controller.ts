@@ -61,9 +61,12 @@ export class UserController {
         );
 
         res.setHeader('refreshToken', refreshToken);
-        return 'login success';
+        return {
+          userId: foundUser.uuid,
+          message: 'login success',
+        };
       } else {
-        return 'login fail';
+        throw new HttpException('login fail', 200);
       }
     } catch (err) {
       Logger.error(err);
@@ -99,7 +102,7 @@ export class UserController {
         );
         res.setHeader('token', token);
         res.setHeader('refreshToken', refreshToken);
-        return 'success';
+        return { userId: foundUser.uuid, message: 'success' };
       } else {
         throw new HttpException('failure', 200);
       }
@@ -153,6 +156,7 @@ export class UserController {
       return {
         access_token,
         refresh_token,
+        userId: user.uuid,
       };
     } catch (e) {
       throw new UnauthorizedException('token 已失效，请重新登录');

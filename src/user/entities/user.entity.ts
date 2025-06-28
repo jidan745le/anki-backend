@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Generated,
   OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
@@ -13,6 +14,10 @@ import { UserDeck } from '../../anki/entities/user-deck.entity';
 export class User {
   @PrimaryGeneratedColumn()
   id: number;
+
+  @Column()
+  @Generated('uuid')
+  uuid: string;
 
   @Column({
     length: 50,
