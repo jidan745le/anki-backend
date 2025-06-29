@@ -1,13 +1,13 @@
 import {
-    BeforeInsert,
-    Column,
-    CreateDateColumn,
-    Entity,
-    Index,
-    JoinColumn,
-    ManyToOne,
-    PrimaryGeneratedColumn,
-    UpdateDateColumn,
+  BeforeInsert,
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { UserCard } from '../../anki/entities/user-cards.entity';
@@ -25,6 +25,8 @@ export enum AIModel {
   CLAUDE = 'claude-3-sonnet',
   DS_CHAT = 'deepseek-chat',
   DS_REASONING = 'deepseek-reasoner',
+  QWEN25_15B_INSTRUCT = 'qwen2.5-1.5b-instruct',
+  QWEN25_32B_INSTRUCT = 'qwen2.5-32b-instruct',
 }
 
 export interface PromptConfig {

@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpException,
+  HttpStatus,
   Param,
   Post,
   Query,
@@ -12,7 +14,12 @@ import {
 import { Observable } from 'rxjs';
 import { LoginGuard } from '../login.guard';
 import { AichatService } from './aichat.service';
-import { CreateChatMessageDto } from './dto/create-chat-message.dto';
+import {
+  ChatContextType,
+  ChatType,
+  CreateChatMessageDto,
+} from './dto/create-chat-message.dto';
+import { AIModel } from './entities/chat-message.entity';
 
 @UseGuards(LoginGuard)
 @Controller('aichat')
@@ -41,6 +48,34 @@ export class AichatController {
     createMessageDto: CreateChatMessageDto,
   ) {
     return this.aichatService.createChatSession(createMessageDto);
+  }
+
+  @Post('word-lookup')
+  async wordLookup(
+    @Body(new ValidationPipe({ transform: true }))
+    createMessageDto: any,
+  ) {
+    // 验证请求参数
+    if (createMessageDto.chattype !== ChatType.WordLookup) {
+      throw new HttpException(
+        'This endpoint is only for word lookup requests',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    if (!createMessageDto.selectionText) {
+      throw new HttpException(
+        'selectionText is required for word lookup',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // 设置默认值 - 默认使用qwen模型进行单词查询
+    createMessageDto.chatcontext = ChatContextType.None;
+    createMessageDto.model =
+      createMessageDto.model || AIModel.QWEN25_32B_INSTRUCT;
+
+    return this.aichatService.createMessage(createMessageDto);
   }
 
   // @Public()

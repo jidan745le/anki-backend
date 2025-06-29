@@ -97,6 +97,18 @@ export function generatePrompt(
 回答应当有结构性，便于理解和记忆。`;
       break;
 
+    case ChatType.WordLookup:
+      typePrompt = `解释单词 "${selectionText}":
+
+格式：
+**词性**: [类型]
+**含义**: [核心意思]
+**例句**: [对应语言的单词简单例句]
+**搭配**: [常用1个]
+
+简洁回答。`;
+      break;
+
     case ChatType.Generic:
     default:
       typePrompt = `请提供帮助：
@@ -142,6 +154,9 @@ export const generateSimplifiedPromptDisplay = (promptConfig: PromptConfig) => {
       break;
     case ChatType.Ask:
       typeDisplay = '回答';
+      break;
+    case ChatType.WordLookup:
+      typeDisplay = '查词';
       break;
     case ChatType.Generic:
       typeDisplay = '回答';

@@ -15,6 +15,7 @@ export enum ChatType {
   Explain = 'Explain',
   Ask = 'Ask',
   Generic = 'Generic',
+  WordLookup = 'WordLookup',
 }
 export class CreateChatMessageDto {
   @IsUUID()

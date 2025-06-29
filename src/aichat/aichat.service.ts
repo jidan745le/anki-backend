@@ -1,6 +1,7 @@
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
+import axios from 'axios';
 import OpenAI from 'openai';
 import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { Observable, Subject } from 'rxjs';
@@ -11,6 +12,7 @@ import { DataSource, In, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import {
   ChatContextType,
+  ChatType,
   CreateChatMessageDto,
 } from './dto/create-chat-message.dto';
 import {
@@ -546,6 +548,12 @@ export class AichatService {
     );
 
     try {
+      // 对于 WordLookup 类型，我们不需要卡片上下文，可以直接处理
+      if (dto.chattype === ChatType.WordLookup) {
+        return await this._processWordLookup(dto);
+      }
+
+      // 原有的逻辑保持不变
       const card = await this.userCardRepository.findOne({
         where: { uuid: dto.cardId },
         relations: ['deck'],
@@ -554,6 +562,7 @@ export class AichatService {
       const deckId = card.deck.id;
       let content: string;
       let globalContext: string;
+
       if (dto.chatcontext === ChatContextType.Deck) {
         content = generatePrompt(
           dto.chatcontext,
@@ -710,6 +719,93 @@ export class AichatService {
       };
     } catch (error) {
       this.logger.error(`Error in _processCreateMessage: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // 添加专门处理单词查询的方法
+  private async _processWordLookup(dto: CreateChatMessageDto) {
+    this.logger.log(`Processing word lookup for: ${dto.selectionText}`);
+
+    try {
+      // 生成单词查询的 prompt
+      const content = generatePrompt(
+        dto.chatcontext,
+        dto.contextContent,
+        dto.chattype,
+        dto.selectionText,
+        dto.question,
+      );
+
+      const userMessage = {
+        role: MessageRole.USER,
+        content: content,
+      };
+
+      // 构建消息数组 - 单词查询不需要历史上下文
+      const messages = [
+        {
+          role: 'system',
+          content: 'Dictionary. Brief word explanations only.',
+        },
+        userMessage,
+      ];
+
+      let aiResponse: string;
+      let tokenUsage = {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      };
+
+      // 判断是否使用qwen模型
+      if (dto.model) {
+        this.logger.debug(
+          `Calling Qwen API for word lookup with model: ${dto.model}`,
+        );
+
+        // 使用qwen的API接口
+        const response = await axios.post(
+          'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+          {
+            model: dto.model,
+            messages: messages,
+            temperature: 0,
+            max_tokens: 150,
+            top_p: 0.8,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${this.configService.get(
+                'DASHSCOPE_API_KEY',
+              )}`,
+            },
+          },
+        );
+
+        aiResponse = response.data.choices[0].message.content;
+        if (response.data.usage) {
+          tokenUsage = {
+            promptTokens: response.data.usage.prompt_tokens || 0,
+            completionTokens: response.data.usage.completion_tokens || 0,
+            totalTokens: response.data.usage.total_tokens || 0,
+          };
+        }
+      }
+
+      // 对于单词查询，我们不保存到数据库（因为没有关联的卡片）
+      // 直接返回结果
+      return {
+        userMessage,
+        aiMessage: {
+          role: MessageRole.ASSISTANT,
+          content: aiResponse,
+        },
+        tokenUsage,
+      };
+    } catch (error) {
+      this.logger.error(`Error in _processWordLookup: ${error.message}`);
       throw error;
     }
   }

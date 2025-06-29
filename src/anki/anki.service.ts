@@ -57,7 +57,13 @@ export interface DeckStats {
 export interface NextCardResponse {
   card: UserCard | { message: 'all_done' } | null;
   stats: DeckStats;
-  allCards: UserCardSummary[];
+  visibleCards: UserCardSummary[]; // 改名为 visibleCards
+  pagination?: {
+    currentIndex: number;
+    totalCards: number;
+    visibleStart: number;
+    visibleEnd: number;
+  };
 }
 
 interface UserCardSummary {
@@ -65,6 +71,11 @@ interface UserCardSummary {
   state: CardState;
   dueDate: Date;
   lastReviewDate: Date | null;
+}
+
+// 添加新的方法参数接口
+export interface GetNextCardOptions {
+  maxVisibleCards?: number;
 }
 
 const isDevelopment = process.env.NODE_ENV === 'development';
@@ -416,7 +427,10 @@ export class AnkiService implements OnApplicationBootstrap {
     userId: number,
     order: LearnOrder,
     mount: boolean,
+    options: GetNextCardOptions = {},
   ): Promise<NextCardResponse> {
+    const { maxVisibleCards = 50 } = options;
+
     if (mount) {
       await this.refreshUserDeckCardsInRedis(userId, deckId);
     }
@@ -433,19 +447,99 @@ export class AnkiService implements OnApplicationBootstrap {
     let nextCardToShow: UserCard | { message: 'all_done' } | null;
 
     if (order === LearnOrder.SEQUENTIAL) {
-      // Type assertion or ensure getSequentialCard matches the expected return type more strictly
       nextCardToShow = (await this.getSequentialCard(deckId, userId)) as
         | UserCard
         | { message: 'all_done' }
         | null;
     } else {
-      // Type assertion or ensure getRandomCard matches the expected return type more strictly
       nextCardToShow = (await this.getRandomCard(deckId, userId)) as
         | UserCard
         | { message: 'all_done' }
         | null;
     }
-    return { card: nextCardToShow, stats, allCards };
+
+    // 计算可见卡片，使用返回的卡片作为当前卡片
+    const currentCardUuid =
+      nextCardToShow && 'uuid' in nextCardToShow
+        ? nextCardToShow.uuid
+        : undefined;
+    const visibleCardsResult = this.calculateVisibleCards(
+      allCards,
+      maxVisibleCards,
+      currentCardUuid,
+    );
+
+    return {
+      card: nextCardToShow,
+      stats,
+      visibleCards: visibleCardsResult.visibleCards,
+      pagination: visibleCardsResult.pagination,
+    };
+  }
+
+  // 添加计算可见卡片的辅助方法
+  private calculateVisibleCards(
+    allCards: UserCardSummary[],
+    maxVisibleCards: number,
+    currentCardUuid?: string,
+  ): {
+    visibleCards: UserCardSummary[];
+    pagination: {
+      currentIndex: number;
+      totalCards: number;
+      visibleStart: number;
+      visibleEnd: number;
+    };
+  } {
+    if (allCards.length <= maxVisibleCards) {
+      // 如果卡片总数小于最大显示数，全部显示
+      return {
+        visibleCards: allCards,
+        pagination: {
+          currentIndex: currentCardUuid
+            ? allCards.findIndex((card) => card.uuid === currentCardUuid)
+            : -1,
+          totalCards: allCards.length,
+          visibleStart: 0,
+          visibleEnd: allCards.length,
+        },
+      };
+    }
+
+    // 找到当前卡片的索引
+    const currentCardIndex = currentCardUuid
+      ? allCards.findIndex((card) => card.uuid === currentCardUuid)
+      : -1;
+
+    let startIndex = 0;
+    let endIndex = maxVisibleCards;
+
+    if (currentCardIndex !== -1) {
+      // 如果存在当前卡片，计算居中显示所需的起始和结束索引
+      const cardsOnEachSide = Math.floor(maxVisibleCards / 2);
+
+      // 计算开始索引，确保不会越界
+      startIndex = Math.max(0, currentCardIndex - cardsOnEachSide);
+
+      // 计算结束索引（不含），确保不会越界
+      endIndex = Math.min(allCards.length, startIndex + maxVisibleCards);
+
+      // 如果结束索引达到了卡片总数，可能需要调整起始索引以显示更多的前面卡片
+      if (endIndex === allCards.length && startIndex > 0) {
+        // 调整起始索引以充分利用maxVisibleCards
+        startIndex = Math.max(0, allCards.length - maxVisibleCards);
+      }
+    }
+
+    return {
+      visibleCards: allCards.slice(startIndex, endIndex),
+      pagination: {
+        currentIndex: currentCardIndex,
+        totalCards: allCards.length,
+        visibleStart: startIndex,
+        visibleEnd: endIndex,
+      },
+    };
   }
 
   private async getSequentialCard(deckId: number, userId: number) {
@@ -1908,6 +2002,7 @@ export class AnkiService implements OnApplicationBootstrap {
     userId: number,
     includeStats = true,
     includeAllCards = true,
+    maxVisibleCards = 50,
   ): Promise<NextCardResponse> {
     // 查找指定UUID的用户卡片
     const userCard = await this.userCardRepository.findOne({
@@ -1919,39 +2014,41 @@ export class AnkiService implements OnApplicationBootstrap {
     });
 
     if (!userCard) {
-      throw new NotFoundException(
-        `Card with UUID ${cardUuid} not found or you don't have access to it`,
-      );
+      throw new NotFoundException(`Card with UUID ${cardUuid} not found`);
     }
 
     let stats: DeckStats = { newCount: 0, learningCount: 0, reviewCount: 0 };
-    let allCards: UserCardSummary[] = [];
+    let visibleCards: UserCardSummary[] = [];
+    let pagination = undefined;
 
-    if (includeStats || includeAllCards) {
-      const deckId = userCard.deck.id;
+    if (includeStats) {
+      stats = await this.calculateDeckStats(userId, userCard.deck.id);
+    }
 
-      if (includeStats) {
-        stats = await this.calculateDeckStats(userId, deckId);
-      }
+    if (includeAllCards) {
+      // 获取所有卡片的摘要信息
+      const cacheKey = this.getDeckStatsCacheKey(userId, userCard.deck.id);
+      const cachedDataRaw = await this.redisClient.get(cacheKey);
+      const allCards: UserCardSummary[] = cachedDataRaw
+        ? JSON.parse(cachedDataRaw)
+        : [];
 
-      if (includeAllCards) {
-        const cacheKey = this.getDeckStatsCacheKey(userId, deckId);
-        const cachedDataRaw = await this.redisClient.get(cacheKey);
-        allCards = cachedDataRaw ? JSON.parse(cachedDataRaw) : [];
+      // 计算可见卡片，以当前卡片为中心
+      const visibleCardsResult = this.calculateVisibleCards(
+        allCards,
+        maxVisibleCards,
+        cardUuid,
+      );
 
-        // 如果缓存中没有数据，从数据库获取
-        if (allCards.length === 0) {
-          await this.refreshUserDeckCardsInRedis(userId, deckId);
-          const refreshedData = await this.redisClient.get(cacheKey);
-          allCards = refreshedData ? JSON.parse(refreshedData) : [];
-        }
-      }
+      visibleCards = visibleCardsResult.visibleCards;
+      pagination = visibleCardsResult.pagination;
     }
 
     return {
       card: userCard,
       stats,
-      allCards,
+      visibleCards,
+      pagination,
     };
   }
 

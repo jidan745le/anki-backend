@@ -52,34 +52,56 @@ export class AnkiController {
 
   @Get('getNextCard')
   async getNextCard(
-    @Query('deckId') deckId: string,
+    @Req() req,
+    @Query('deckId') deckId?: string,
     @Query('order') order: LearnOrder = LearnOrder.SEQUENTIAL,
     @Query('mount') mount = 'false',
-    @Req() req,
+    @Query('maxVisible') maxVisible?: string,
   ) {
     console.log('deckId', deckId);
     console.log('order', order);
     console.log('mount', mount);
+    console.log('maxVisible', maxVisible);
+
+    if (!deckId) {
+      throw new Error('deckId is required');
+    }
+
     const userId: number = req?.user?.id;
     const isMount = mount === 'true';
+
+    // 解析maxVisible参数，如果未提供则使用默认值
+    const maxVisibleCards = maxVisible ? parseInt(maxVisible, 10) : undefined;
+
     return await this.ankiService.getNextCard(
       Number(deckId),
       userId,
       order,
       isMount,
+      {
+        maxVisibleCards,
+      },
     );
   }
 
   @Get('getCard')
   async getCard(
-    @Query('uuid') uuid: string,
+    @Req() req,
+    @Query('uuid') uuid?: string,
     @Query('includeStats') includeStats = 'true',
     @Query('includeAllCards') includeAllCards = 'true',
-    @Req() req,
+    @Query('maxVisible') maxVisible?: string,
   ) {
+    if (!uuid) {
+      throw new Error('uuid is required');
+    }
+
     const userId: number = req?.user?.id;
     const includeStatsBoolean = includeStats === 'true';
     const includeAllCardsBoolean = includeAllCards === 'true';
+
+    // 解析maxVisible参数，如果未提供则使用默认值
+    const maxVisibleCards = maxVisible ? parseInt(maxVisible, 10) : 50;
 
     try {
       const result = await this.ankiService.getCardByUuid(
@@ -87,6 +109,7 @@ export class AnkiController {
         userId,
         includeStatsBoolean,
         includeAllCardsBoolean,
+        maxVisibleCards,
       );
 
       return result;
