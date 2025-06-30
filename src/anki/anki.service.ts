@@ -1845,7 +1845,7 @@ export class AnkiService implements OnApplicationBootstrap {
       );
     }
 
-    return originalDeck;
+    return omit(originalDeck, ['cards']);
   }
 
   // 为现有卡片创建用户学习记录（不重复创建基础卡片）
