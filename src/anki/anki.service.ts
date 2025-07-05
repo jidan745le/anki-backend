@@ -293,6 +293,7 @@ export class AnkiService implements OnApplicationBootstrap {
       where: { user: { id: userId }, deck: { id: deckId } },
       select: ['uuid', 'state', 'dueDate', 'lastReviewDate'],
     });
+    // console.log(userCards, 'userCards');
     const summaries: UserCardSummary[] = userCards.map((uc) => ({
       uuid: uc.uuid,
       state: uc.state,
@@ -468,6 +469,7 @@ export class AnkiService implements OnApplicationBootstrap {
       maxVisibleCards,
       currentCardUuid,
     );
+    console.log(nextCardToShow, 'visibleCardsResult');
 
     return {
       card: nextCardToShow,

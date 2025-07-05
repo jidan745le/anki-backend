@@ -1,6 +1,5 @@
-import { DataSource } from 'typeorm';
 import * as dotenv from 'dotenv';
-import * as path from 'path';
+import { DataSource } from 'typeorm';
 
 const isDevelopment = process.env.NODE_ENV === 'development';
 const envPath = isDevelopment ? 'src/.env' : '.env';

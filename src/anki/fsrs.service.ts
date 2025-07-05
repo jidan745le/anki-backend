@@ -74,6 +74,7 @@ export class FSRSService {
 
     // 创建空卡片获取初始参数
     const emptyCard = createEmptyCard(now);
+    // console.log(emptyCard, emptyCard.due, 'emptyCard');
 
     // 设置初始FSRS参数
     userCard.dueDate = emptyCard.due;

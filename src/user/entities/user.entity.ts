@@ -1,13 +1,14 @@
 import {
-  Column,
-  CreateDateColumn,
-  Entity,
-  Generated,
-  OneToMany,
-  PrimaryGeneratedColumn,
-  UpdateDateColumn,
+    Column,
+    CreateDateColumn,
+    Entity,
+    Generated,
+    OneToMany,
+    PrimaryGeneratedColumn,
+    UpdateDateColumn,
 } from 'typeorm';
 import { Deck } from '../../anki/entities/deck.entity';
+import { Note } from '../../anki/entities/note.entity';
 import { UserDeck } from '../../anki/entities/user-deck.entity';
 
 @Entity()
@@ -52,4 +53,7 @@ export class User {
 
   @OneToMany(() => Deck, (deck) => deck.creator)
   createdDecks: Deck[];
+
+  @OneToMany(() => Note, (note) => note.user)
+  notes: Note[];
 }

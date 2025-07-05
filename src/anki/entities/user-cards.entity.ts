@@ -1,20 +1,21 @@
 import {
-  BeforeInsert,
-  Column,
-  CreateDateColumn,
-  DeleteDateColumn,
-  Entity,
-  JoinColumn,
-  ManyToOne,
-  OneToMany,
-  PrimaryGeneratedColumn,
-  UpdateDateColumn,
+    BeforeInsert,
+    Column,
+    CreateDateColumn,
+    DeleteDateColumn,
+    Entity,
+    JoinColumn,
+    ManyToOne,
+    OneToMany,
+    PrimaryGeneratedColumn,
+    UpdateDateColumn,
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { ChatMessage } from '../../aichat/entities/chat-message.entity';
 import { User } from '../../user/entities/user.entity';
 import { Card } from './card.entity';
 import { Deck } from './deck.entity';
+import { Note } from './note.entity';
 
 // 卡片状态枚举
 export enum CardState {
@@ -98,6 +99,9 @@ export class UserCard {
 
   @OneToMany(() => ChatMessage, (chatMessage) => chatMessage.userCard)
   messages: ChatMessage[];
+
+  @OneToMany(() => Note, (note) => note.userCard)
+  notes: Note[];
 
   @Column({ type: 'datetime', nullable: true })
   lastReviewDate: Date;

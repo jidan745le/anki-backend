@@ -10,8 +10,10 @@ import { AnkiModule } from './anki/anki.module';
 import { Card } from './anki/entities/card.entity';
 import { DeckSettings } from './anki/entities/deck-settings.entity';
 import { Deck } from './anki/entities/deck.entity';
+import { Note } from './anki/entities/note.entity';
 import { UserCard } from './anki/entities/user-cards.entity';
 import { UserDeck } from './anki/entities/user-deck.entity';
+import { NoteModule } from './anki/note.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -28,6 +30,7 @@ import { WebsocketModule } from './websocket/websocket.module';
   imports: [
     UserModule,
     AnkiModule,
+    NoteModule,
     ConfigModule.forRoot({
       envFilePath: path.join(__dirname, '.env'),
       isGlobal: true,
@@ -56,10 +59,12 @@ import { WebsocketModule } from './websocket/websocket.module';
           ChatMessage,
           UserDeck,
           UserCard,
+          Note,
           TempFile,
         ],
         poolSize: configService.getOrThrow('DB_POOL_SIZE'),
         connectorPackage: 'mysql2',
+        timezone: 'Z',
         extra: {
           authPlugin: 'sha256_password',
         },
