@@ -21,6 +21,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import * as fs from 'fs';
+import { Public } from 'src/decorators/public.decorator';
 import { LoginGuard } from '../login.guard';
 import { UploadResponseDto } from './dto/upload-response.dto';
 import { FileService } from './file.service';
@@ -274,7 +275,7 @@ export class FileController {
       }
     }
   }
-
+  @Public()
   @Get('permanent/:fileId')
   async getPermanentFile(
     @Param('fileId') fileId: string,

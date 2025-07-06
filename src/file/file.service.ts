@@ -210,7 +210,10 @@ export class FileService {
       await fs.writeFile(filePath, file.buffer);
 
       // 构建访问URL
-      const url = `/api/file/permanent/${tempFileId}`;
+      const url =
+        process.env.NODE_ENV === 'development'
+          ? `/api/file/permanent/${tempFileId}`
+          : `https://api.myanki.cc/file/permanent/${tempFileId}`;
 
       // 保存文件信息到数据库 - 永久文件不设置过期时间
       const tempFile = this.tempFileRepository.create({
