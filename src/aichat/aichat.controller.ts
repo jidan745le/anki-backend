@@ -89,4 +89,21 @@ export class AichatController {
   getSessionStatus(@Param('sessionId') sessionId: string): Observable<any> {
     return this.aichatService.getSessionStatus(sessionId);
   }
+
+  // 打断语音对话接口
+  @Post('interrupt/:sessionId')
+  async interruptVoiceConversation(@Param('sessionId') sessionId: string) {
+    return this.aichatService.interruptVoiceConversation(sessionId);
+  }
+
+  // 新增：打断聊天流接口
+  @Post('interrupt-chat/:sessionId')
+  async interruptChatStream(@Param('sessionId') sessionId: string) {
+    return this.aichatService.interruptChatStream(sessionId);
+  }
+
+  @Post('interrupt-session/:sessionId')
+  async interruptSession(@Param('sessionId') sessionId: string) {
+    return this.aichatService.interruptSession(sessionId);
+  }
 }

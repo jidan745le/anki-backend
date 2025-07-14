@@ -6,7 +6,7 @@
         "source.organizeImports": "explicit"
     },
     "[typescript]": {
-        "editor.defaultFormatter": "esbenp.prettier-vscode"
+        "editor.defaultFormatter": "rvest.vs-code-prettier-eslint"
     },
     "eslint.validate": [
         "javascript",
