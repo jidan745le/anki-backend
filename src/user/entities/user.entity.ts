@@ -1,12 +1,13 @@
 import {
-    Column,
-    CreateDateColumn,
-    Entity,
-    Generated,
-    OneToMany,
-    PrimaryGeneratedColumn,
-    UpdateDateColumn,
+  Column,
+  CreateDateColumn,
+  Entity,
+  Generated,
+  OneToMany,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
+import { UserCharacterPreference } from '../../aichat/entities/user-character-preference.entity';
 import { Deck } from '../../anki/entities/deck.entity';
 import { Note } from '../../anki/entities/note.entity';
 import { UserDeck } from '../../anki/entities/user-deck.entity';
@@ -56,4 +57,7 @@ export class User {
 
   @OneToMany(() => Note, (note) => note.user)
   notes: Note[];
+
+  @OneToMany(() => UserCharacterPreference, (pref) => pref.user)
+  characterPreferences: UserCharacterPreference[];
 }

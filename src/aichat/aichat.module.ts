@@ -6,12 +6,15 @@ import { EmbeddingModule } from 'src/embedding/embedding.module';
 import { AichatController } from './aichat.controller';
 import { AichatService } from './aichat.service';
 import { ChatMessage } from './entities/chat-message.entity';
+import { UserCharacterPreference } from './entities/user-character-preference.entity';
+import { VirtualCharacter } from './entities/virtual-character.entity';
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ChatMessage, Card, UserCard]),
+    TypeOrmModule.forFeature([ChatMessage, Card, UserCard, VirtualCharacter, UserCharacterPreference]),
     EmbeddingModule,
   ],
   controllers: [AichatController],
   providers: [AichatService],
 })
 export class AichatModule {}
+

@@ -7,9 +7,10 @@ import {
   Param,
   Post,
   Query,
+  Req,
   Sse,
   UseGuards,
-  ValidationPipe,
+  ValidationPipe
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { LoginGuard } from '../login.guard';
@@ -105,5 +106,34 @@ export class AichatController {
   @Post('interrupt-session/:sessionId')
   async interruptSession(@Param('sessionId') sessionId: string) {
     return this.aichatService.interruptSession(sessionId);
+  }
+
+  // 获取可用的陪学虚拟人物列表
+  @Get('characters/available')
+  async getAvailableCharacters() {
+    return this.aichatService.getAvailableCharacters();
+  }
+
+  // 为用户激活虚拟人物
+  @Post('characters/:characterCode/activate')
+  async activateCharacterForUser(
+    @Param('characterCode') characterCode: string,
+    @Req() req: any,
+  ) {
+    const userId = req?.user?.id;
+    if (!userId) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+    return this.aichatService.activateCharacterForUser(userId, characterCode);
+  }
+
+  // 获取用户已激活的虚拟人物列表
+  @Get('characters/activated')
+  async getUserActivatedCharacters(@Req() req: any) {
+    const userId = req?.user?.id;
+    if (!userId) {
+      throw new HttpException('User not authenticated', HttpStatus.UNAUTHORIZED);
+    }
+    return this.aichatService.getUserActivatedCharacters(userId);
   }
 }

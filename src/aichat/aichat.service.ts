@@ -29,6 +29,8 @@ import {
   ChatMessage,
   MessageRole,
 } from './entities/chat-message.entity';
+import { UserCharacterPreference } from './entities/user-character-preference.entity';
+import { VirtualCharacter } from './entities/virtual-character.entity';
 import {
   UserVoiceConnection,
   VoiceConnectionState,
@@ -84,6 +86,10 @@ export class AichatService {
     private cardRepository: Repository<Card>,
     @InjectRepository(UserCard)
     private userCardRepository: Repository<UserCard>,
+    @InjectRepository(VirtualCharacter)
+    private virtualCharacterRepository: Repository<VirtualCharacter>,
+    @InjectRepository(UserCharacterPreference)
+    private userCharacterPreferenceRepository: Repository<UserCharacterPreference>,
     private configService: ConfigService,
     private dataSource: DataSource,
     private embeddingService: EmbeddingService,
@@ -297,7 +303,10 @@ export class AichatService {
       // 根据是否有角色选择不同的系统提示词
       let systemPrompt: string;
       if (dto.character) {
-        systemPrompt = getCharacterSystemPrompt(dto.character);
+        systemPrompt = await getCharacterSystemPrompt(
+          this.virtualCharacterRepository,
+          dto.character,
+        );
       } else {
         systemPrompt = getSystemPrompt(card.deck.deckType);
       }
@@ -313,6 +322,8 @@ export class AichatService {
         })),
         userMessage,
       ];
+
+      this.logger.debug(`History111: ${JSON.stringify(messages, null, 2)}`);
 
       // 创建一个唯一的会话ID
       const sessionId = uuidv4();
@@ -1011,12 +1022,11 @@ export class AichatService {
     character: CharacterType,
     sessionId: string,
   ) {
+    // 检查是否已有可用连接
+    const existingConnection = this.userVoiceConnections.get(userId);
     this.logger.log(
       `Initializing voice connection for user ${userId} with character ${character}`,
     );
-
-    // 检查是否已有可用连接
-    const existingConnection = this.userVoiceConnections.get(userId);
     if (existingConnection) {
       const { connectionState, taskState } = existingConnection;
 
@@ -1041,6 +1051,7 @@ export class AichatService {
 
         return; // 复用现有连接，直接返回
       } else {
+        this.logger.log(`Cleaning up old voice connection for user ${userId}`);
         // 清理旧连接
         if (existingConnection.websocket) {
           existingConnection.websocket.close();
@@ -1058,7 +1069,7 @@ export class AichatService {
       websocket: null,
       currentTaskId: null,
       currentSessionId: sessionId,
-      speechRate: 1.1, // 固定语速
+      speechRate: 1, // 固定语速
       lastActivity: new Date(),
       emotionProcessed: false,
       audioStarted: false,
@@ -1112,13 +1123,16 @@ export class AichatService {
     }
   }
 
-  private sendRunTaskMessage(userId: number) {
+  private async sendRunTaskMessage(userId: number) {
     const userConnection = this.userVoiceConnections.get(userId);
     if (!userConnection || !userConnection.websocket) {
       return;
     }
 
-    const voiceId = getVoiceForCharacter(userConnection.character);
+    const voiceId = await getVoiceForCharacter(
+      this.virtualCharacterRepository,
+      userConnection.character,
+    );
     const runTaskMessage: VoiceMessage = {
       header: {
         action: 'run-task',
@@ -1344,6 +1358,7 @@ export class AichatService {
       case 'task-finished':
         userConnection.taskState = VoiceTaskState.TASK_FINISHED;
         this.logger.log(`Voice task finished for user ${userId}`);
+        this.logger.log(JSON.stringify(message));
         this.websocketGateway.sendToUser(
           userId,
           userConnection.socketId,
@@ -1375,53 +1390,11 @@ export class AichatService {
         break;
 
       default:
-        this.logger.log(
-          `Unknown voice event for user ${userId}: ${message.header.event}`,
-        );
+        // this.logger.log(
+        //   `Unknown voice event for user ${userId}: ${message.header.event}`,
+        // );
         break;
     }
-  }
-
-  async interruptVoiceConversation(sessionId: string) {
-    const session = this.chatSessions.get(sessionId);
-    if (!session) {
-      throw new HttpException('Session not found', HttpStatus.NOT_FOUND);
-    }
-
-    const userConnection = this.userVoiceConnections.get(session.userId);
-    if (!userConnection) {
-      throw new HttpException(
-        'Voice connection not found',
-        HttpStatus.NOT_FOUND,
-      );
-    }
-
-    // 设置任务为中断状态
-    userConnection.taskState = VoiceTaskState.TASK_INTERRUPTED;
-
-    // 关闭WebSocket连接
-    if (userConnection.websocket) {
-      userConnection.websocket.close();
-      userConnection.websocket = null;
-    }
-
-    // 更新连接状态
-    userConnection.connectionState = VoiceConnectionState.DISCONNECTED;
-
-    // 通知客户端
-    this.websocketGateway.sendToUser(
-      session.userId,
-      userConnection.socketId,
-      'voice_interrupted',
-      {
-        sessionId: sessionId,
-      },
-    );
-
-    this.logger.log(
-      `Voice conversation interrupted for user ${session.userId}`,
-    );
-    return { message: 'Voice conversation interrupted successfully' };
   }
 
   // 异步准备语音任务（不阻塞）
@@ -1579,18 +1552,6 @@ export class AichatService {
       message: '',
     };
 
-    // 1. 检查并中断 Chat Streaming
-    if (session.abortController && !session.responseComplete) {
-      try {
-        session.abortController.abort();
-        results.chatInterrupted = true;
-        this.logger.log(`Chat stream interrupted for session ${sessionId}`);
-      } catch (error) {
-        this.logger.error(`Failed to interrupt chat stream: ${error.message}`);
-      }
-    }
-
-    // 2. 检查并中断 Voice Streaming
     const userConnection = this.userVoiceConnections.get(session.userId);
     if (userConnection && userConnection.currentSessionId === sessionId) {
       // 检查语音任务是否活跃
@@ -1632,6 +1593,19 @@ export class AichatService {
       }
     }
 
+    // 1. 检查并中断 Chat Streaming
+    if (session.abortController && !session.responseComplete) {
+      try {
+        session.abortController.abort();
+        results.chatInterrupted = true;
+        this.logger.log(`Chat stream interrupted for session ${sessionId}`);
+      } catch (error) {
+        this.logger.error(`Failed to interrupt chat stream: ${error.message}`);
+      }
+    }
+
+    // 2. 检查并中断 Voice Streaming
+
     // 3. 生成结果消息
     if (results.chatInterrupted && results.voiceInterrupted) {
       results.message = 'Chat and voice streams interrupted successfully';
@@ -1648,5 +1622,213 @@ export class AichatService {
     );
 
     return results;
+  }
+
+  async interruptVoiceConversation(sessionId: string) {
+    const session = this.chatSessions.get(sessionId);
+    if (!session) {
+      throw new HttpException('Session not found', HttpStatus.NOT_FOUND);
+    }
+
+    const userConnection = this.userVoiceConnections.get(session.userId);
+    if (!userConnection) {
+      throw new HttpException(
+        'Voice connection not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    // 设置任务为中断状态
+    userConnection.taskState = VoiceTaskState.TASK_INTERRUPTED;
+
+    // 关闭WebSocket连接
+    if (userConnection.websocket) {
+      userConnection.websocket.close();
+      userConnection.websocket = null;
+    }
+
+    // 更新连接状态
+    userConnection.connectionState = VoiceConnectionState.DISCONNECTED;
+
+    // 通知客户端
+    this.websocketGateway.sendToUser(
+      session.userId,
+      userConnection.socketId,
+      'voice_interrupted',
+      {
+        sessionId: sessionId,
+      },
+    );
+
+    this.logger.log(
+      `Voice conversation interrupted for user ${session.userId}`,
+    );
+    return { message: 'Voice conversation interrupted successfully' };
+  }
+
+  // 获取可用的陪学虚拟人物列表
+  async getAvailableCharacters() {
+    try {
+      const characters = await this.virtualCharacterRepository.find({
+        where: { isActive: true },
+        order: { sortOrder: 'ASC', createdAt: 'ASC' },
+        select: [
+          'id',
+          'uuid',
+          'code',
+          'name',
+          'description',
+          'avatar',
+          'emotionPatterns',
+          'sortOrder',
+        ],
+      });
+
+      return {
+        success: true,
+        data: characters,
+        message: 'Available characters retrieved successfully',
+      };
+    } catch (error) {
+      this.logger.error(`Error getting available characters: ${error.message}`);
+      throw new HttpException(
+        'Failed to retrieve available characters',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // 为用户激活虚拟人物
+  async activateCharacterForUser(userId: number, characterCode: string) {
+    try {
+      // 查找虚拟人物
+      const character = await this.virtualCharacterRepository.findOne({
+        where: { code: characterCode, isActive: true },
+      });
+
+      if (!character) {
+        throw new HttpException(
+          'Character not found or not active',
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
+      // 检查用户是否已经激活了这个角色
+      const existingPreference =
+        await this.userCharacterPreferenceRepository.findOne({
+          where: {
+            user: { id: userId },
+            character: { id: character.id },
+          },
+        });
+
+      if (existingPreference) {
+        // 更新最后使用时间
+        existingPreference.lastUsedAt = new Date();
+        await this.userCharacterPreferenceRepository.save(existingPreference);
+
+        return {
+          success: true,
+          data: {
+            character: {
+              id: character.id,
+              uuid: character.uuid,
+              code: character.code,
+              name: character.name,
+              description: character.description,
+              avatar: character.avatar,
+            },
+            isNewActivation: false,
+          },
+          message: 'Character already activated for user',
+        };
+      }
+
+      // 创建新的用户角色偏好
+      const newPreference = this.userCharacterPreferenceRepository.create({
+        user: { id: userId },
+        character: { id: character.id },
+        isDefault: false,
+        usageCount: 0,
+        lastUsedAt: new Date(),
+      });
+
+      await this.userCharacterPreferenceRepository.save(newPreference);
+
+      this.logger.log(
+        `Character ${characterCode} activated for user ${userId}`,
+      );
+
+      return {
+        success: true,
+        data: {
+          character: {
+            id: character.id,
+            uuid: character.uuid,
+            code: character.code,
+            name: character.name,
+            description: character.description,
+            avatar: character.avatar,
+          },
+          isNewActivation: true,
+        },
+        message: 'Character activated successfully',
+      };
+    } catch (error) {
+      this.logger.error(
+        `Error activating character for user: ${error.message}`,
+      );
+
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      throw new HttpException(
+        'Failed to activate character',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // 获取用户已激活的虚拟人物列表
+  async getUserActivatedCharacters(userId: number) {
+    try {
+      const preferences = await this.userCharacterPreferenceRepository.find({
+        where: {
+          user: { id: userId },
+          character: { isActive: true },
+        },
+        relations: ['character'],
+        order: { lastUsedAt: 'DESC', createdAt: 'DESC' },
+      });
+
+      const activatedCharacters = preferences.map((pref) => ({
+        id: pref.character.id,
+        uuid: pref.character.uuid,
+        code: pref.character.code,
+        name: pref.character.name,
+        description: pref.character.description,
+        avatar: pref.character.avatar,
+        emotionPatterns: pref.character.emotionPatterns,
+        isDefault: pref.isDefault,
+        usageCount: pref.usageCount,
+        lastUsedAt: pref.lastUsedAt,
+        activatedAt: pref.createdAt,
+      }));
+
+      return {
+        success: true,
+        data: activatedCharacters,
+        message: 'User activated characters retrieved successfully',
+      };
+    } catch (error) {
+      this.logger.error(
+        `Error getting user activated characters: ${error.message}`,
+      );
+      throw new HttpException(
+        'Failed to retrieve user activated characters',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 }

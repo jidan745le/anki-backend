@@ -6,6 +6,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import * as path from 'path';
 import { AichatModule } from './aichat/aichat.module';
 import { ChatMessage } from './aichat/entities/chat-message.entity';
+import { UserCharacterPreference } from './aichat/entities/user-character-preference.entity';
+import { VirtualCharacter } from './aichat/entities/virtual-character.entity';
 import { AnkiModule } from './anki/anki.module';
 import { Card } from './anki/entities/card.entity';
 import { DeckSettings } from './anki/entities/deck-settings.entity';
@@ -61,6 +63,8 @@ import { WebsocketModule } from './websocket/websocket.module';
           UserCard,
           Note,
           TempFile,
+          VirtualCharacter,
+          UserCharacterPreference,
         ],
         poolSize: configService.getOrThrow('DB_POOL_SIZE'),
         connectorPackage: 'mysql2',

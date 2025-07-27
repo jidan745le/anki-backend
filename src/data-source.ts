@@ -19,13 +19,13 @@ export const dataSource = new DataSource({
         'src/user/entities/*.entity.ts',
         'src/anki/entities/*.entity.ts',
         'src/auth/entities/*',
-        'src/aichat/entities/*',
+        'src/aichat/entities/*',  // 这个路径应该已经包含了新实体
       ]
     : [
         'user/entities/*.entity.js',
         'anki/entities/*.entity.js',
         'auth/entities/*.entity.js',
-        'aichat/entities/*.entity.js',
+        'aichat/entities/*.entity.js',  // 这个路径应该已经包含了新实体
       ],
   poolSize: 10,
   migrations: isDevelopment ? ['src/migrations/*.ts'] : ['migrations/*.js'],
