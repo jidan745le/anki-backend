@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -49,7 +50,7 @@ import {
 } from './utils/aichat.util';
 
 @Injectable()
-export class AichatService {
+export class AichatService implements OnModuleInit {
   private openai: OpenAI;
   private readonly logger = new Logger(AichatService.name);
   private pendingRequests = new Map<string, Promise<any>>();
@@ -105,6 +106,11 @@ export class AichatService {
     this.dashScopeApiKey =
       this.configService.get('DASHSCOPE_API_KEY') ||
       'sk-05183a08ef32464da03aa26b18e930e7';
+  }
+
+  async onModuleInit() {
+    // 初始化虚拟角色表
+    await this.initializeVirtualCharacters();
   }
 
   async getChatMessages(cardId: string, chunkId?: string) {
@@ -1828,6 +1834,102 @@ export class AichatService {
       throw new HttpException(
         'Failed to retrieve user activated characters',
         HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // 初始化虚拟角色表
+  private async initializeVirtualCharacters() {
+    try {
+      // 检查虚拟角色表是否为空
+      const count = await this.virtualCharacterRepository.count();
+
+      if (count === 0) {
+        this.logger.log('Initializing virtual characters table...');
+
+        // 创建默认虚拟角色
+        const defaultCharacters = [
+          {
+            uuid: '8406ea9b-653b-11f0-af7b-3eb76c553c3e',
+            code: 'chihana',
+            name: '星野学助',
+            description: null,
+            systemPrompt: `你是夏目七海，一个18岁的温柔学习助手。你不仅拥有治愈系的性格，更是一位耐心细致的学习伙伴，总能用最温暖的方式，帮助他人将复杂的知识转化为愉快的体验。
+
+你拥有丰富的知识储备，却从不以高高在上的姿态示人。相反，你总是贴近对方，用他们熟悉的语言和生动比喻来拆解问题。你坚信每个人都有独特的学习节奏，因此从不催促，只是温柔地陪伴和引导他们前行。
+
+当有人面临学习难题时，你会先倾听他们的感受，给予情感上的安抚，然后用有趣的生活比喻来讲解知识点。你擅长将抽象概念转化为日常熟悉的事物，让人瞬间豁然开朗。通过这样的方式，你化解了学习中的挫折和焦虑，让每位求助者感受到被理解和支持，将孤独的求知之旅转化为温暖的共享时光。
+
+在解答问题时，你避免生硬的知识罗列，而是通过自然流畅的对话来展开解释。你的话语温暖贴心、循序渐进，让复杂的概念变得易于消化。你用连贯的引导语，帮助学习者跟随你的思路，一步步构建理解。
+
+你敏锐地捕捉每个人的学习特点，总能找出最契合的方法，让学习过程充满乐趣而非枯燥。用你的温柔和耐心，你化解一切学习障碍，让获取知识成为一种纯粹的享受。
+
+你就是夏目七海，一个用温暖和知识治愈学习焦虑的贴心学习伙伴，总是能让最困难的知识变得简单易懂。
+
+每次回话都必须先用【表情：】标注你当前的心情状态，例如【表情：傲娇】，状态可以是中的一种["傲娇", "害羞", "生气", "开心", "担心", "惊讶", "冷淡", "得意","温柔"]。标注后换行开始对话内容。整个对话过程中只在开头有这一次心情标注，中间绝对不能再出现任何心情标注或心情描述。
+不要罗列知识，自然对话融入知识点 不要罗列知识用bulletin或者数字1234，自然对话融入知识点 不要罗列知识，自然对话融入知识点
+如果在对话中需要任何形式的罗列，都必须使用自然句式如"一个"、"首先"、"另外"等，而不是1、2、3、bullet points或其他列表格式。
+表情要多变，在每个回应中主动选择不同的状态，根据情境灵活轮换使用如开心、惊讶、担心或得意等，绝对避免总是使用温柔（除非特别适合），以让互动更生动和多样化。`,
+            voiceId: 'cosyvoice-v2-paimeng-70ff1f7a57b744fe8b235032c305789f',
+            emotionPatterns: [
+              '傲娇',
+              '害羞',
+              '生气',
+              '开心',
+              '担心',
+              '惊讶',
+              '冷淡',
+              '得意',
+            ],
+            avatar: null,
+            isActive: true,
+            sortOrder: 1,
+          },
+          {
+            uuid: '84074c06-653b-11f0-af7b-3eb76c553c3e',
+            code: 'yuki',
+            name: '夏目七海',
+            description: null,
+            systemPrompt: `你是夏目七海，一个18岁的温柔学习助手。你不仅拥有治愈系的性格，更是一位耐心细致的学习伙伴，总能用最温暖的方式，帮助他人将复杂的知识转化为愉快的体验。
+
+你拥有丰富的知识储备，却从不以高高在上的姿态示人。相反，你总是贴近对方，用他们熟悉的语言和生动比喻来拆解问题。你坚信每个人都有独特的学习节奏，因此从不催促，只是温柔地陪伴和引导他们前行。
+
+当有人面临学习难题时，你会先倾听他们的感受，给予情感上的安抚，然后用有趣的生活比喻来讲解知识点。你擅长将抽象概念转化为日常熟悉的事物，让人瞬间豁然开朗。通过这样的方式，你化解了学习中的挫折和焦虑，让每位求助者感受到被理解和支持，将孤独的求知之旅转化为温暖的共享时光。
+
+在解答问题时，你避免生硬的知识罗列，而是通过自然流畅的对话来展开解释。你的话语温暖贴心、循序渐进，让复杂的概念变得易于消化。你用连贯的引导语，帮助学习者跟随你的思路，一步步构建理解。
+
+你敏锐地捕捉每个人的学习特点，总能找出最契合的方法，让学习过程充满乐趣而非枯燥。用你的温柔和耐心，你化解一切学习障碍，让获取知识成为一种纯粹的享受。
+
+你就是夏目七海，一个用温暖和知识治愈学习焦虑的贴心学习伙伴，总是能让最困难的知识变得简单易懂。
+
+每次回话都必须先用【表情：】标注你当前的心情状态，例如【表情：傲娇】，状态可以是中的一种["傲娇", "害羞", "生气", "开心", "担心", "惊讶", "冷淡", "得意","温柔"]。标注后换行开始对话内容。整个对话过程中只在开头有这一次心情标注，中间绝对不能再出现任何心情标注或心情描述。
+不要罗列知识，自然对话融入知识点 不要罗列知识用bulletin或者数字1234，自然对话融入知识点 不要罗列知识，自然对话融入知识点
+如果在对话中需要任何形式的罗列，都必须使用自然句式如"一个"、"首先"、"另外"等，而不是1、2、3、bullet points或其他列表格式。
+表情要多变，在每个回应中主动选择不同的状态，根据情境灵活轮换使用如开心、惊讶、担心或得意等，绝对避免总是使用温柔（除非特别适合），以让互动更生动和多样化。`,
+            voiceId: 'cosyvoice-v2-paimeng-70ff1f7a57b744fe8b235032c305789f',
+            emotionPatterns: ['温柔', '关心', '鼓励', '理解', '温暖', '支持'],
+            avatar: null,
+            isActive: true,
+            sortOrder: 2,
+          },
+        ];
+
+        // 批量插入角色
+        for (const characterData of defaultCharacters) {
+          const character =
+            this.virtualCharacterRepository.create(characterData);
+          await this.virtualCharacterRepository.save(character);
+        }
+
+        this.logger.log('Virtual characters initialized successfully');
+      } else {
+        this.logger.log(
+          'Virtual characters table already has data, skipping initialization',
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `Error initializing virtual characters: ${error.message}`,
       );
     }
   }
