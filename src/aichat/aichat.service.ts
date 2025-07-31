@@ -994,12 +994,13 @@ export class AichatService implements OnModuleInit {
 
   private canStartVoiceTask(userId: number): boolean {
     const userConnection = this.userVoiceConnections.get(userId);
+
     if (!userConnection) {
       return true; // 没有连接，可以启动
     }
 
     const { connectionState, taskState } = userConnection;
-
+    this.logger.log('canStartVoiceTask', connectionState, taskState);
     // 如果连接已断开，可以启动新任务
     if (connectionState === VoiceConnectionState.DISCONNECTED) {
       return true;
@@ -1018,7 +1019,11 @@ export class AichatService implements OnModuleInit {
     ) {
       return true;
     }
-
+    this.logger.log(
+      'canStartVoiceTask return false',
+      connectionState,
+      taskState,
+    );
     return false;
   }
 
