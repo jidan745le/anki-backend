@@ -247,7 +247,7 @@ export class WebsocketGateway implements OnGatewayConnection {
       userId,
       socketId,
       userIdStr,
-      JSON.stringify(Object.entries(userConnections)),
+      JSON.stringify(Object.entries(userConnections || {})),
       userConnections?.has(socketId),
     );
 
