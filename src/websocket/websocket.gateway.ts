@@ -14,6 +14,7 @@ import { Server, Socket } from 'socket.io';
   cors: false,
 })
 export class WebsocketGateway implements OnGatewayConnection {
+  private readonly logger = new Logger(WebsocketGateway.name);
   constructor() {
     Logger.log('WebsocketGateway constructor');
   }
@@ -241,6 +242,13 @@ export class WebsocketGateway implements OnGatewayConnection {
   ) {
     const userIdStr = userId.toString();
     const userConnections = this.connections.get(userIdStr);
+    this.logger.log(
+      'sendToUser',
+      userId,
+      socketId,
+      userConnections,
+      userConnections?.has(socketId),
+    );
 
     // 检查该socketId是否属于该用户
     if (!userConnections || !userConnections.has(socketId)) {
