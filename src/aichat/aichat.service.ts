@@ -1113,6 +1113,12 @@ export class AichatService implements OnModuleInit {
         this.handleVoiceMessage(userId, data, isBinary);
       });
 
+      ws.on('disconnect', () => {
+        this.logger.log(`Voice WebSocket disconnected for user ${userId}`);
+        userConnection.connectionState = VoiceConnectionState.DISCONNECTED;
+        userConnection.taskState = VoiceTaskState.CONNECTION_CLOSE;
+      });
+
       ws.on('close', () => {
         this.logger.log(`Voice WebSocket closed for user ${userId}`);
         userConnection.connectionState = VoiceConnectionState.DISCONNECTED;
