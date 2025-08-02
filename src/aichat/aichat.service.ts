@@ -1165,7 +1165,7 @@ export class AichatService implements OnModuleInit {
           text_type: 'PlainText',
           voice: voiceId,
           format: 'mp3',
-          sample_rate: 8000,
+          sample_rate: 16000,
           volume: 75,
           rate: userConnection.speechRate,
           pitch: 1,
