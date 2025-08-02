@@ -1080,7 +1080,7 @@ export class AichatService implements OnModuleInit {
       websocket: null,
       currentTaskId: null,
       currentSessionId: sessionId,
-      speechRate: 1, // 固定语速
+      speechRate: 1.2, // 固定语速
       lastActivity: new Date(),
       emotionProcessed: false,
       audioStarted: false,
@@ -1165,8 +1165,8 @@ export class AichatService implements OnModuleInit {
           text_type: 'PlainText',
           voice: voiceId,
           format: 'mp3',
-          sample_rate: 22050,
-          volume: 50,
+          sample_rate: 8000,
+          volume: 75,
           rate: userConnection.speechRate,
           pitch: 1,
           enable_ssml: false,
