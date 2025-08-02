@@ -4,6 +4,7 @@ import {
   ConnectedSocket,
   MessageBody,
   OnGatewayConnection,
+  OnGatewayDisconnect,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
@@ -12,8 +13,12 @@ import { Server, Socket } from 'socket.io';
 
 @WebSocketGateway({
   cors: false,
+  pingTimeout: 15000,
+  pingInterval: 5000,
 })
-export class WebsocketGateway implements OnGatewayConnection {
+export class WebsocketGateway
+  implements OnGatewayConnection, OnGatewayDisconnect
+{
   private readonly logger = new Logger(WebsocketGateway.name);
   constructor() {
     Logger.log('WebsocketGateway constructor');
